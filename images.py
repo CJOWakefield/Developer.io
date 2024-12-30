@@ -143,7 +143,7 @@ def download_area(api, center_lat, center_lon, grid_size_km, num_images):
     with open(file, 'w') as f:
         json.dump(coordinate_info, f, indent=2)
 
-def main(longitude=-122.4194, latitude=37.7749, grid_size_km=0.2, num_images=16):
+def process_images(longitude=-122.4194, latitude=37.7749, grid_size_km=0.2, num_images=16):
     """
     Parameters:
         longitude: focal longitude coordinate.
@@ -158,6 +158,3 @@ def main(longitude=-122.4194, latitude=37.7749, grid_size_km=0.2, num_images=16)
         print(f"API invalid: {e}")
     except Exception as e:
         print(f"An error occurred: {e}")
-
-if __name__ == "__main__":
-    main(longitude=-73.98294316456237, latitude=40.691891321818304, grid_size_km=0.4, num_images=9)
