@@ -105,7 +105,14 @@ def download_area(api, center_lat, center_lon, grid_size_km, num_images):
     coordinates, grid_dim = ret_coords(center_lat, center_lon, grid_size_km, num_images)
     total_area_km = grid_size_km * grid_dim
 
-    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'{location}_{center_lat:.3f}_{center_lon:.3f}_{total_area_km:.1f}km_{grid_size_km*1000:.0f}m')
+    # Create unique ID starting point (e.g., 100000 to avoid conflicts)
+    base_id = 100000
+
+    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_generated_data')
+    os.makedirs(base_dir, exist_ok=True)
+
+    output_dir = os.path.join(base_dir,
+                             f'{location}_{center_lat:.3f}_{center_lon:.3f}_{total_area_km:.1f}km_{grid_size_km*1000:.0f}m')
     os.makedirs(output_dir, exist_ok=True)
 
     coordinate_info = {
@@ -119,26 +126,38 @@ def download_area(api, center_lat, center_lon, grid_size_km, num_images):
             'zoom_level': zoom
         },
         'images': {}
-        }
+    }
 
     for i, (lat, lon) in enumerate(coordinates, 1):
         try:
             print(f"Downloading image {i} of {num_images} ---- position: {lat:.5f}, {lon:.5f}")
 
             img = image_download(api, lat, lon, zoom=zoom)
-            # Create filename using coordinates
-            filename = f'{lat:.5f}_{lon:.5f}.png'
-            output_path = os.path.join(output_dir, filename)
-            img.save(output_path, 'PNG', quality=100)
+            img = img.convert('RGB')
 
-            coordinate_info['images'][filename] = {'latitude': lat,
-                                                   'longitude': lon,
-                                                   'grid_position': {
-                                                       'row': (i - 1) // grid_dim,
-                                                       'col': (i - 1) % grid_dim},
-                                                   'path': output_path}
+            row = (i - 1) // grid_dim
+            col = (i - 1) % grid_dim
+
+            # Create unique ID and filename
+            image_id = base_id + i
+            filename = f'{image_id}_sat.jpg'
+
+            output_path = os.path.join(output_dir, filename)
+            img.save(output_path, 'JPEG', quality=95)
+
+            coordinate_info['images'][filename] = {
+                'id': image_id,
+                'latitude': lat,
+                'longitude': lon,
+                'grid_position': {
+                    'row': row,
+                    'col': col
+                },
+                'path': output_path
+            }
         except Exception as e:
             print(f"Image error --- {lat}, {lon}: {e}")
+
     file = os.path.join(output_dir, 'coordinate_info.json')
     with open(file, 'w') as f:
         json.dump(coordinate_info, f, indent=2)
