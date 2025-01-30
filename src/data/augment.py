@@ -117,4 +117,4 @@ class AugmentedSatelliteImages(Dataset):
 
 if __name__ == '__main__':
     dataset = AugmentedSatelliteImages(os.path.join(base_directory, 'data', 'train_data'))
-    dataset.visualise_augmentations(0)
+    dataset.visualise_augmentations(100)

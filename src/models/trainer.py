@@ -1,6 +1,6 @@
 # Initial notes: Train/test/val data spec: 2448 x 2448 pixels, RGB, 50cm/pixel -> ~1.224km img width
 # For implementation purposes: Data augmentation needed, augment data with different zoom, width specs,
-#
+
 import time
 import os
 import re
@@ -9,16 +9,12 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 import torch
 import torch.nn as nn
-import torchvision.models as models
 from torch.utils.data import DataLoader
-import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from torch.optim.lr_scheduler import OneCycleLR
 import torch.nn as nn
 from torch.nn import functional as F
-from torch.autograd import Variable
 
 # Transformer
 transformer = transforms.Compose([transforms.ToTensor(),
@@ -162,20 +158,17 @@ class UNet(nn.Module):
         # Decoder path with explicit dimension handling
         layer = self.dconv1(c_final)
         # Ensure dimensions match before concatenation
-        if layer.shape != c3.shape:
-            layer = F.interpolate(layer, size=c3.shape[2:])
+        if layer.shape != c3.shape: layer = F.interpolate(layer, size=c3.shape[2:])
         layer = torch.cat([layer, c3], dim=1)
         layer = self.dres1(layer)
 
         layer = self.dconv2(layer)
-        if layer.shape != c2.shape:
-            layer = F.interpolate(layer, size=c2.shape[2:])
+        if layer.shape != c2.shape: layer = F.interpolate(layer, size=c2.shape[2:])
         layer = torch.cat([layer, c2], dim=1)
         layer = self.dres2(layer)
 
         layer = self.dconv3(layer)
-        if layer.shape != c1.shape:
-            layer = F.interpolate(layer, size=c1.shape[2:])
+        if layer.shape != c1.shape: layer = F.interpolate(layer, size=c1.shape[2:])
         layer = torch.cat([layer, c1], dim=1)
         layer = self.dres3(layer)
 
@@ -354,71 +347,7 @@ def train_model(epochs=5):
 
     res = trainer.train()
 
-def visualise_pred(model_path=None, data_dir='_data/train/', n_samples=3, image_ids=None):
-    ## Model setup - Load, initiate CUDA
-    if not model_path:
-        base_dir = '_data/models'
-        versions = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d)) and d.startswith('v_')]
-        if not versions:
-            raise ValueError("No model versions found in _data/models")
 
-        latest_version = sorted(versions, key=lambda x: (int(x.split('_')[1]), int(x.split('_')[2])))[-1]
-        model_path = os.path.join(base_dir, latest_version, 'model.pt')
-
-    model = UNet()
-    model.load_state_dict(torch.load(model_path)['model_state_dict'])
-    model.eval().to(device := torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
-
-    ## Load image sample or specified index
-    if image_ids:
-        image_ids = [image_ids] if isinstance(image_ids, (int, str)) else image_ids
-        sat_files = [f for id in image_ids for f in os.listdir(data_dir) if f.endswith(f"_sat.jpg")]
-        if not sat_files:
-            raise ValueError("No matching images found")
-        n_samples = len(sat_files)
-    else: sat_files = np.random.choice([f for f in os.listdir(data_dir) if f.endswith('_sat.jpg')], size=n_samples, replace=False)
-
-    class_colors = {0: (0, 255, 255), # urban land - Cyan
-                    1: (255, 255, 0), # agricultural land - Yellow
-                    2: (255, 0, 255), # rangeland - Magenta
-                    3: (0, 255, 0), # forest land - Green
-                    4: (0, 0, 255), # water - Dark blue
-                    5: (255, 255, 255), # barren land - White
-                    6: (0, 0, 0)} # unknown - Black
-
-    rows = 1 if n_samples <= 3 else (n_samples + 2) // 3
-    cols = min(n_samples, 3)
-    plt.figure(figsize=(6*cols, 8*rows))
-
-    ## Generate image mask, converting to RGB and plotting against _sat.jpg image.
-    results = []
-    for idx, file in enumerate(sat_files):
-        # Load and predict
-        sat_img = cv2.cvtColor(cv2.imread(os.path.join(data_dir, file)), cv2.COLOR_BGR2RGB)
-        input_tensor = transformer(sat_img).unsqueeze(0).to(device)
-        pred = torch.argmax(model(input_tensor)['segmentation'].squeeze(), dim=0).cpu().numpy()
-
-        pred_rgb = np.zeros((*pred.shape, 3), dtype=np.uint8)
-        for class_idx, color in class_colors.items():
-            pred_rgb[pred == class_idx] = color
-
-        image_id = re.match(r'(\d+)', file).group(1)
-        results.append((sat_img, pred_rgb, image_id))
-
-        plt.subplot(rows*2, cols, idx+1)
-        plt.title(f'Original Image (ID: {image_id})')
-        plt.imshow(sat_img)
-        plt.axis('off')
-
-        plt.subplot(rows*2, cols, idx+1+cols)
-        plt.title(f'Predicted Mask (ID: {image_id})')
-        plt.imshow(pred_rgb)
-        plt.axis('off')
-
-    plt.tight_layout()
-    plt.show()
-    return results
 
 if __name__ == '__main__':
-    # train_model(epochs=5)
-    print(visualise_pred(n_samples=6))
+    train_model(epochs=5)

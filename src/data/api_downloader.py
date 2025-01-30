@@ -24,7 +24,7 @@ import urllib
 '''
 
 base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-save_directory = os.path.join(base_directory, 'data', 'raw')
+save_directory = os.path.join(base_directory, 'data', 'api_images')
 
 class SatelliteDownloader:
     def __init__(self):
@@ -148,8 +148,8 @@ class SatelliteDownloader:
 
 if __name__ == '__main__':
     downloader = SatelliteDownloader()
-    downloader.process_location(country="United Kingdom",
-                                city="London",
-                                postcode="SW1A 1AA",
-                                grid_size_km=0.2,
+    downloader.process_location(country="United States of America",
+                                city="Chicago",
+                                # postcode="60601",
+                                grid_size_km=0.5,
                                 num_images=16)
