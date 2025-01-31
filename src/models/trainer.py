@@ -22,22 +22,6 @@ transformer = transforms.Compose([transforms.ToTensor(),
                                   transforms.Resize((256, 256), antialias=False),
                                   transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
-class ImagePreview():
-    # Preview sat image alongside mask
-    def __init__(self, directory, label_directory, id):
-        self.directory = directory
-        self.label_directory = label_directory
-        self.image_pos = id
-
-    def preview(self):
-        images = SatelliteImages(self.directory, self.label_directory)
-        idx = images.image_id.index(self.image_pos)
-        sat, mask, _ = images.__getitem__(idx)
-        for i in range(len([sat, mask])):
-            plt.subplot(1, 2, i+1)
-            plt.imshow([sat, mask][i])
-        plt.show()
-
 class ResidualBlock(nn.Module):
     def __init__(self, input_dim, output_dim, dropout):
         super().__init__()
@@ -72,7 +56,7 @@ class UNet(nn.Module):
     def __init__(self, config=None):
         super().__init__()
         self.config = config if config != None else UNetConfig()
-        input, features, dropout = self.config.input_dim, self.config.n_features, self.config.dropout
+        input, dropout = self.config.input_dim, self.config.dropout
 
         # Encoder
         self.b1 = ResidualBlock(input, 64, dropout)

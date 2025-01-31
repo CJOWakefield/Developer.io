@@ -4,7 +4,8 @@ import cv2
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from trainer import *
+from src.models.trainer import transformer, UNet
+# from .trainer import transformer, UNet
 from PIL import Image
 from src.data.api_downloader import SatelliteDownloader
 
@@ -103,11 +104,11 @@ class RegionPredictor:
         predictions = visualise_pred(data_path=data_dir, model_version=self.model_version)
         for _, mask, id in predictions:
             mask_img = Image.fromarray(mask.astype(np.uint8))
-            output_path = os.path.join(data_dir, f'{id}_mask')
-            mask_img.save(output_path, 'PNG', quality=95)
+            output_path = os.path.join(data_dir, f'{id}_mask.png')
+            mask_img.save(output_path, format='PNG')
         return data_dir
 
 if __name__ == '__main__':
     # print(visualise_pred(n_samples=6))
     predictor = RegionPredictor()
-    predictor.predict_region('Germany', 'Berlin')
+    predictor.predict_region('Indonesia', 'Berawa')
