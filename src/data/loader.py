@@ -26,6 +26,7 @@ from torch.nn import functional as F
 base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 class SatelliteImages(Dataset):
+    # Class for data loading from 'https://www.kaggle.com/datasets/balraj98/deepglobe-land-cover-classification-dataset?select=class_dict.csv'
     def __init__(self, directory, transform=None):
         self.directory = directory
         self.transform = transform
@@ -48,6 +49,7 @@ class SatelliteImages(Dataset):
         return sat, mask_tensor, self.image_id[i]
 
     def __len__(self): return len(self.image_id)
+
 
 class ImagePreview:
     def __init__(self, directory):
