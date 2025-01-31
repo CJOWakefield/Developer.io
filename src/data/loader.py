@@ -50,7 +50,6 @@ class SatelliteImages(Dataset):
 
     def __len__(self): return len(self.image_id)
 
-
 class ImagePreview:
     def __init__(self, directory):
         self.directory = directory

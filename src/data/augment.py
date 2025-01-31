@@ -5,7 +5,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset
 from torchvision.utils import make_grid
-from loader import *
+import torch
+from src.data.loader import SatelliteImages
 
 ## To-do notes: Add variable file for hardcoded pathing of relative directories. If needed, adjust manipulability of image split to further increase training set.
 
@@ -17,7 +18,6 @@ from loader import *
     >> augment -> Executes the 'get_quarter' function, rotating pixel matrix to generate new augmented images from quartered original images.
 
     >>> Inputs: save_directory hard coded in file. Can be adjusted but made using OS for robust file navigation.
-
 
 > AugmentedSatelliteImages - Class to load dataset images and output resulting augmentations. Designed for execution on one image alone.
     > Dependencies - SatelliteImages dataset function, from .loader.py
