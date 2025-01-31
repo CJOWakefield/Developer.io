@@ -102,7 +102,12 @@ class SatelliteDownloader:
             total_area_km = grid_size_km * grid_dim
 
             safe_city = city.lower().replace(' ', '_')
-            output_dir = os.path.join(self.base_dir, f'{safe_city}_{latitude:.3f}_{longitude:.3f}_{total_area_km:.1f}km_{grid_size_km*1000:.0f}m')
+            folder_name = f'{safe_city}_{latitude:.3f}_{longitude:.3f}_{total_area_km:.1f}km_{grid_size_km*1000:.0f}m'
+            output_dir = os.path.join(self.base_dir, folder_name)
+
+            if folder_name in os.listdir(save_directory):
+                print('Images pre-existing.')
+                return output_dir
             os.makedirs(output_dir, exist_ok=True)
 
             coordinate_info = {

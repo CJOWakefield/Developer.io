@@ -23,11 +23,14 @@ base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath
 train_directory = os.path.join(base_directory, 'data', 'train_data')
 model_directory = os.path.join(base_directory, 'models')
 
-def visualise_pred(model_path=model_directory, data_path=train_directory, n_samples=3, image_ids=None):
+def visualise_pred(model_path=model_directory, data_path=train_directory, model_version=None, n_samples=3, image_ids=None):
     versions = [d for d in os.listdir(model_directory) if os.path.isdir(os.path.join(model_directory, d)) and d.startswith('v_')]
     if not versions: raise ValueError('Model not found.')
-    latest_version = sorted(versions, key=lambda x: (int(x.split('_')[1]), int(x.split('_')[2])))[-1]
-    model_path = os.path.join(model_directory, latest_version, 'model.pt')
+
+    if model_version: model_path = os.path.join(model_directory, model_version, 'model.pt')
+    else:
+        latest_version = sorted(versions, key=lambda x: (int(x.split('_')[1]), int(x.split('_')[2])))[-1]
+        model_path = os.path.join(model_directory, latest_version, 'model.pt')
 
     model = UNet()
     model.load_state_dict(torch.load(model_path)['model_state_dict'])
@@ -83,20 +86,21 @@ def visualise_pred(model_path=model_directory, data_path=train_directory, n_samp
     return results
 
 class RegionPredictor:
-    def __init__(self, base_dir=base_directory):
+    def __init__(self, base_dir=base_directory, model_version=None):
         self.base_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
         self.generated_dir = os.path.join(self.base_dir, 'data', 'api_images')
+        self.model_version = model_version
 
     def predict_region(self, country, city, postcode=None, grid_size_km=0.5, num_images=16):
         downloader = SatelliteDownloader()
-        downloader.process_location(country, city, postcode, grid_size_km, num_images)
+        directory = downloader.process_location(country, city, postcode, grid_size_km, num_images)
 
-        latest_dir = sorted([d for d in os.listdir(self.generated_dir)], key=lambda x: os.path.getmtime(os.path.join(self.generated_dir, x)))[-1]
-        data_dir = os.path.join(self.generated_dir, latest_dir)
+        # latest_dir = sorted([d for d in os.listdir(self.generated_dir)], key=lambda x: os.path.getmtime(os.path.join(self.generated_dir, x)))[-1]
+        data_dir = os.path.join(self.generated_dir, directory)
 
         if not [f for f in os.listdir(data_dir) if f.endswith('_sat.jpg')]: raise ValueError(f"No satellite images found in {data_dir}")
 
-        predictions = visualise_pred(data_path=data_dir)
+        predictions = visualise_pred(data_path=data_dir, model_version=self.model_version)
         for _, mask, id in predictions:
             mask_img = Image.fromarray(mask.astype(np.uint8))
             output_path = os.path.join(data_dir, f'{id}_mask')
@@ -106,4 +110,4 @@ class RegionPredictor:
 if __name__ == '__main__':
     # print(visualise_pred(n_samples=6))
     predictor = RegionPredictor()
-    predictor.predict_region('Netherlands', 'Amsterdam')
+    predictor.predict_region('Germany', 'Berlin')

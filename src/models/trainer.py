@@ -16,6 +16,9 @@ from torch.optim.lr_scheduler import OneCycleLR
 import torch.nn as nn
 from torch.nn import functional as F
 
+base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+model_directory = os.path.join(base_directory, 'models')
+
 # Transformer
 transformer = transforms.Compose([transforms.ToTensor(),
                                   transforms.Resize((256, 256), antialias=False),
@@ -121,9 +124,9 @@ class UNet(nn.Module):
         self.dconv3 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2, padding=0)
 
         # Decoder - residual
-        self.dres1 = ResidualBlock(512, 256, dropout)  # After concatenation
-        self.dres2 = ResidualBlock(256, 128, dropout)  # After concatenation
-        self.dres3 = ResidualBlock(128, 64, dropout)      # After concatenation
+        self.dres1 = ResidualBlock(512, 256, dropout)
+        self.dres2 = ResidualBlock(256, 128, dropout)
+        self.dres3 = ResidualBlock(128, 64, dropout)
 
         # Final layers
         self.segmentation = nn.Conv2d(64, self.config.n_classes, kernel_size=1)
@@ -140,8 +143,7 @@ class UNet(nn.Module):
 
     def forward(self, x):
         # Ensure input dimensions are correct
-        if x.dim() != 4:
-            raise ValueError(f"Expected 4D input (batch, channels, height, width), got {x.dim()}D")
+        if x.dim() != 4: raise ValueError(f"Expected 4D input (batch, channels, height, width), got {x.dim()}D")
 
         # Encoder path with dimension tracking
         c1 = self.b1(x)
@@ -178,24 +180,30 @@ class UNet(nn.Module):
                 'features': layer,
                 'encoded': c_final}
 
-def Model():
-    config = UNetConfig()
-    model = UNet(config)
-    x = torch.randn(1, 3, 256, 256)
-    output = model(x)
+class ModelInit:
+    def __init__(self, config=None):
+        self.config = config if config else UNetConfig()
+        self.model = UNet(self.config)
 
-    print(f'Trainable params: {model.params():,}')
-    print(f"Segmentation shape: {output['segmentation'].shape}")
-    print(f"Feature shape: {output['features'].shape}")
-    print(f"Encoded shape: {output['encoded'].shape}")
+    def model_params(self, input_dim=(1, 3, 256, 256)):
+        x = torch.randn(*input_dim)
+        output = self.model(x)
+        print(f'Trainable params: {sum(p.numel() for p in self.model.parameters() if p.requires_grad):,}')
+        print(f"Segmentation shape: {output['segmentation'].shape}")
+        print(f"Feature shape: {output['features'].shape}")
+        print(f"Encoded shape: {output['encoded'].shape}")
+
+    def get_model(self):
+        return self.model
 
 class Train:
-    def __init__(self, data, model, optimiser, loss, epochs, batch_size, val_data=None):
+    def __init__(self, data, model, optimiser, loss, epochs, batch_size, model_directory=model_directory, val_data=None):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = model.to(self.device)
         self.optimiser, self.loss, self.epochs = optimiser, loss, epochs
         self.train_loss, self.val_loss = [], []
         self.best_val_loss = float('inf')
+        self.model_directory = model_directory
 
         self.load_train = DataLoader(data, batch_size=batch_size, shuffle=True, num_workers=4,
                                      pin_memory=bool(self.device=='cuda'), prefetch_factor=2,
@@ -227,32 +235,24 @@ class Train:
         self.train_loss.append(epoch_loss)
         return epoch_loss
 
-    def get_next_version(self, base_dir):
+    def get_next_version(self):
         """Generate next available version number for model directory"""
-        existing_dirs = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d)) and d.startswith('v_')]
-        if not existing_dirs:
-            return 'v_0_01'
+        existing_dirs = [d for d in os.listdir(model_directory) if d.startswith('v_')]
+        if not existing_dirs: return 'v_0_01'
 
         versions = []
         for d in existing_dirs:
-            try:
-                # Convert version strings to tuple of integers
-                nums = d.replace('v_', '').split('_')
-                versions.append((int(nums[0]), int(nums[1])))
-            except (ValueError, IndexError):
-                continue
+            nums = d.replace('v_', '').split('_')
+            versions.append((int(nums[0]), int(nums[1])))
+        if not versions: return 'v_0_01'
 
-        if not versions:
-            return 'v_0_01'
-
-        # Get max version and create next version
-        latest_major, latest_minor = max(versions)  # Now comparing tuples, not map objects
+        latest_major, latest_minor = max(versions)
         next_minor = str(latest_minor + 1).zfill(2)
         return f'v_{latest_major}_{next_minor}'
 
-    def train(self, base_dir='_data/models'):
-        version = self.get_next_version(base_dir)
-        checkpoint_dir = os.path.join(base_dir, version)
+    def train(self):
+        version = self.get_next_version()
+        checkpoint_dir = os.path.join(self.model_directory, version)
         os.makedirs(checkpoint_dir, exist_ok=True)
 
         start_time = time.time()
@@ -329,9 +329,8 @@ class FocalLoss(nn.Module):
             return focal_loss.sum()
 
 def train_model(epochs=5):
-    # Init params & hyperparams
-    model = UNet()
-    training_data = SatelliteImages('data/train', transform=transformer)
+    model = ModelInit().get_model()
+    training_data = SatelliteImages(os.path.join(base_directory, 'data', 'train_data'), transform=transformer)
     # validation_data = SatelliteImages('_data/valid', transform=transformer)
 
     optimiser = torch.optim.Adam(model.parameters(), lr=0.01)
@@ -345,9 +344,10 @@ def train_model(epochs=5):
                     batch_size=16,
                     val_data=None)
 
-    res = trainer.train()
-
+    trainer.train()
 
 
 if __name__ == '__main__':
+    # model = ModelInit()
+    # model.model_params()
     train_model(epochs=5)

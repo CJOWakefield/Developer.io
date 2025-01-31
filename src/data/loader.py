@@ -14,7 +14,6 @@ from torch.nn import functional as F
 
     >>> Inputs: base_directory hard coded in file. Transformation can be used but needs to be reimplemented later on.
 
-
 > ImagePreview - Visualisation function from the SatelliteImages dataset. For frontend and bug fixing use.
     > Dependencies - SatelliteImages dataset function.
 
