@@ -11,7 +11,7 @@ load_dotenv(BASE_DIR / '.env')
 class CloudConfig:
     PROJECT_ID = os.getenv('GCP_PROJECT_ID')
     BUCKET_NAME = os.getenv('GCP_BUCKET_NAME')
-    SERVICE_ACCOUNT_PATH = BASE_DIR / 'service' / 'developerio'
+    SERVICE_ACCOUNT_PATH = f'{BASE_DIR}/service/developerio.json'
 
     @classmethod
     def validate(cls):
@@ -20,8 +20,12 @@ class CloudConfig:
             missing_vars.append('GCP_PROJECT_ID')
         if not cls.BUCKET_NAME:
             missing_vars.append('GCP_BUCKET_NAME')
-        if not cls.SERVICE_ACCOUNT_PATH.exists():
+        if not cls.SERVICE_ACCOUNT_PATH:
             missing_vars.append('Service Account Key File')
 
         if missing_vars:
             raise ValueError(f"Missing required configuration: {', '.join(missing_vars)}")
+
+
+if __name__ == '__main__':
+    print(BASE_DIR)

@@ -6,7 +6,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from fastapi import FastAPI
 from config import CloudConfig
-from CloudStorage.client import CloudStorageClient
+from API.client import CloudStorageClient
 
 # Validate configuration at startup
 CloudConfig.validate()

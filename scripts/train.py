@@ -1,7 +1,7 @@
 from src.models import *
 
-def main(epochs=5):
+def main(epochs):
     train_model(epochs=epochs)
 
 if __name__ == '__main__':
-    main()
+    main(15)
