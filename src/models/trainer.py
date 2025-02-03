@@ -280,7 +280,7 @@ class FocalLoss(nn.Module):
 
 def train_model(epochs=5):
     model = ModelInit().get_model()
-    training_data = SatelliteImages(os.path.join(base_directory, 'data', 'train_data'), transform=transformer)
+    training_data = SatelliteImages(os.path.join(base_directory, 'data', 'train'), transform=transformer)
     # validation_data = SatelliteImages('_data/valid', transform=transformer)
 
     optimiser = torch.optim.Adam(model.parameters(), lr=0.01)

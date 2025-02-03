@@ -1,14 +1,13 @@
 import os
 import math
 import json
-import requests
+import aiohttp
+import asyncio
+import multiprocessing
 from PIL import Image
 from io import BytesIO
 from geopy.geocoders import Nominatim
 from dotenv import load_dotenv
-import urllib
-import multiprocessing
-from concurrent.futures import ThreadPoolExecutor
 
 ''' ----- Downloader file summary -----
 
@@ -25,21 +24,127 @@ from concurrent.futures import ThreadPoolExecutor
 '''
 thread_limit = 16
 base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-save_directory = os.path.join(base_directory, 'data', 'api_images')
+save_directory = os.path.join(base_directory, 'data', 'downloaded')
 
 class SatelliteDownloader:
-    def __init__(self):
-        global thread_limit
+    def __init__(self, batch_size=4, testing=False):
         load_dotenv()
         self.api_key = os.getenv('GOOGLE_MAPS_API_KEY')
         if not self.api_key: raise ValueError("API key invalid.")
         self.base_dir = save_directory
         self.geolocator = Nominatim(user_agent="birds_eye_view_downloader")
+        self.batch_size = batch_size
+        self.session = None
+        self.testing = testing
 
         # Threading maximised at 16 or CPU max processing
         available_cores = multiprocessing.cpu_count()
-        self.num_threads = max(thread_limit, available_cores)
+        self.num_threads = min(thread_limit, available_cores * 2)
 
+    async def _init_session(self):
+        if not self.session:
+            self.session = aiohttp.ClientSession()
+
+    async def _download_image_async(self, lat, lon, zoom):
+        params = {
+            'center': f'{lat},{lon}',
+            'zoom': zoom,
+            'size': '640x640',
+            'maptype': 'satellite',
+            'key': self.api_key,
+            'scale': 2
+        }
+        try:
+            async with self.session.get('https://maps.googleapis.com/maps/api/staticmap', params=params) as response:
+                if response.status == 200:
+                    return await response.read()
+        except Exception as e:
+            print(f"Download error: {e}")
+        return None
+
+    async def _process_batch(self, batch_coords, zoom, output_dir, grid_dim, metadata):
+        tasks = []
+        for idx, (lat, lon) in batch_coords:
+            image_id = 100001 + idx
+            filename = f'{image_id}_sat.jpg'
+            output_path = os.path.join(output_dir, filename)
+
+            tasks.append(self._download_image_async(lat, lon, zoom))
+
+        batch_results = await asyncio.gather(*tasks)
+
+        for (idx, (lat, lon)), img_data in zip(batch_coords, batch_results):
+            if img_data:
+                image_id = 100001 + idx
+                filename = f'{image_id}_sat.jpg'
+                output_path = os.path.join(output_dir, filename)
+
+                Image.open(BytesIO(img_data)).convert('RGB').save(output_path, 'JPEG', quality=95)
+
+                metadata['images'][filename] = {'id': image_id,
+                                                'position': {'lat': lat, 'lon': lon},
+                                                'grid': {'row': idx//grid_dim, 'col': idx%grid_dim},
+                                                'path': output_path}
+
+                if self.testing: print(f"Downloaded {len(metadata['images'])}/{len(batch_coords) * (idx//self.batch_size + 1)}")
+
+    async def process_location(self, country, city, postcode=None, grid_size_km=0.5, num_images=16):
+        try:
+            os.makedirs(self.base_dir, exist_ok=True)
+
+            lat, lon, address = self.get_coordinates(country, city, postcode)
+            zoom = self.get_zoom(grid_size_km)
+            coordinates, grid_dim = self.calculate_grid(lat, lon, grid_size_km, num_images)
+
+            folder_name = f'{city.lower().replace(" ", "_")}_{lat:.3f}_{lon:.3f}_{grid_size_km*grid_dim:.1f}km_{grid_size_km*1000:.0f}m'
+            output_dir = os.path.join(self.base_dir, folder_name)
+
+            if os.path.exists(output_dir):
+                print('Images pre-existing.')
+                return output_dir
+
+            os.makedirs(output_dir)
+
+            metadata = {
+                'metadata': {
+                    'address': address,
+                    'center': {'lat': lat, 'lon': lon},
+                    'grid_size_km': grid_size_km,
+                    'num_images': num_images,
+                    'grid_dim': grid_dim,
+                    'zoom': zoom
+                },
+                'images': {}
+            }
+
+            # Initialize session
+            await self._init_session()
+
+            # Process in batches
+            coords_with_idx = list(enumerate(coordinates))
+            batches = [coords_with_idx[i:i + self.batch_size]
+                      for i in range(0, len(coords_with_idx), self.batch_size)]
+
+            for batch in batches:
+                await self._process_batch(batch, zoom, output_dir, grid_dim, metadata)
+
+            if self.session:
+                await self.session.close()
+                self.session = None
+
+            with open(os.path.join(output_dir, 'metadata.json'), 'w') as f:
+                json.dump(metadata, f, indent=2)
+
+            return output_dir
+
+        except Exception as e:
+            if self.session:
+                await self.session.close()
+                self.session = None
+            print(f"Process error: {e}")
+            return None
+
+    # Existing methods remain unchanged
     def get_coordinates(self, country, city, postcode=None):
         try:
             query = f"{postcode}, {city}, {country}" if postcode else f"{city}, {country}"
@@ -68,87 +173,8 @@ class SatelliteDownloader:
                 for i in range(grid_dim)
                 for j in range(grid_dim)][:num_images], grid_dim
 
-    def download_image(self, lat, lon, zoom, output_path):
-        params = {
-            'center': f'{lat},{lon}',
-            'zoom': zoom,
-            'size': '640x640',
-            'maptype': 'satellite',
-            'key': self.api_key,
-            'scale': 2
-        }
-        response = requests.get(f'https://maps.googleapis.com/maps/api/staticmap?{urllib.parse.urlencode(params)}')
-        if response.status_code == 200:
-            Image.open(BytesIO(response.content)).convert('RGB').save(output_path, 'JPEG', quality=95)
-            return True
-        return False
-
-    def process_location(self, country, city, postcode=None, grid_size_km=0.5, num_images=16):
-        try:
-            # Ensure base directory exists
-            os.makedirs(self.base_dir, exist_ok=True)
-
-            lat, lon, address = self.get_coordinates(country, city, postcode)
-            zoom = self.get_zoom(grid_size_km)
-            coordinates, grid_dim = self.calculate_grid(lat, lon, grid_size_km, num_images)
-
-            folder_name = f'{city.lower().replace(" ", "_")}_{lat:.3f}_{lon:.3f}_{grid_size_km*grid_dim:.1f}km_{grid_size_km*1000:.0f}m'
-            output_dir = os.path.join(self.base_dir, folder_name)
-
-            # Check for existing folder before creating
-            if os.path.exists(output_dir):
-                print('Images pre-existing.')
-                return output_dir
-
-            # Create output directory only if it doesn't exist
-            os.makedirs(output_dir)
-
-            metadata = {
-                'metadata': {
-                    'address': address,
-                    'center': {'lat': lat, 'lon': lon},
-                    'grid_size_km': grid_size_km,
-                    'num_images': num_images,
-                    'grid_dim': grid_dim,
-                    'zoom': zoom
-                },
-                'images': {}
-            }
-
-            def download_worker(args):
-                idx, (lat, lon) = args
-                image_id = 100001 + idx
-                filename = f'{image_id}_sat.jpg'
-                output_path = os.path.join(output_dir, filename)
-
-                if self.download_image(lat, lon, zoom, output_path):
-                    return filename, {
-                        'id': image_id,
-                        'position': {'lat': lat, 'lon': lon},
-                        'grid': {'row': idx//grid_dim, 'col': idx%grid_dim},
-                        'path': output_path
-                    }
-                return None
-
-            with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
-                for result in executor.map(download_worker, enumerate(coordinates)):
-                    if result:
-                        filename, info = result
-                        metadata['images'][filename] = info
-                        print(f"Downloaded {len(metadata['images'])}/{num_images}")
-
-            with open(os.path.join(output_dir, 'metadata.json'), 'w') as f:
-                json.dump(metadata, f, indent=2)
-
-            return output_dir
-
-        except Exception as e:
-            print(f"Process error: {e}")
-            return None
-
 if __name__ == '__main__':
-    downloader = SatelliteDownloader()
-    downloader.process_location(country="Indonesia",
-                                city="Jakarta",
-                                grid_size_km=0.5,
-                                num_images=16)
+    downloader = SatelliteDownloader(batch_size=16)
+    asyncio.run(downloader.process_location(country="United Kingdom",
+                                            city="Ascot",
+                                            postcode='SL5 7SJ'))

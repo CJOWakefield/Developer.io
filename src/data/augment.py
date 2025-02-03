@@ -31,7 +31,7 @@ from src.data.loader import SatelliteImages
 '''
 
 base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-save_directory = os.path.join(base_directory, 'data', 'processed')
+save_directory = os.path.join(base_directory, 'data', 'augmented')
 
 class SatelliteAugmentation:
     def __init__(self, target_size=(2448, 2448)):
@@ -115,6 +115,6 @@ class AugmentedSatelliteImages(Dataset):
         plt.tight_layout()
         plt.show()
 
-if __name__ == '__main__':
-    dataset = AugmentedSatelliteImages(os.path.join(base_directory, 'data', 'train_data'))
-    dataset.visualise_augmentations(100)
+# if __name__ == '__main__':
+#     dataset = AugmentedSatelliteImages(os.path.join(base_directory, 'data', 'train_data'))
+#     dataset.visualise_augmentations(100)

@@ -21,7 +21,7 @@ from src.data.api_downloader import SatelliteDownloader
 '''
 
 base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-train_directory = os.path.join(base_directory, 'data', 'train_data')
+train_directory = os.path.join(base_directory, 'data', 'train')
 model_directory = os.path.join(base_directory, 'models')
 
 def visualise_pred(model_path=model_directory, data_path=train_directory, model_version=None, n_samples=3, image_ids=None):
@@ -89,7 +89,7 @@ def visualise_pred(model_path=model_directory, data_path=train_directory, model_
 class RegionPredictor:
     def __init__(self, base_dir=base_directory, model_version=None):
         self.base_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
-        self.generated_dir = os.path.join(self.base_dir, 'data', 'api_images')
+        self.generated_dir = os.path.join(self.base_dir, 'data', 'downloaded')
         self.model_version = model_version
 
     def predict_region(self, country, city, postcode=None, grid_size_km=0.5, num_images=16):
@@ -107,8 +107,3 @@ class RegionPredictor:
             output_path = os.path.join(data_dir, f'{id}_mask.png')
             mask_img.save(output_path, format='PNG')
         return data_dir
-
-if __name__ == '__main__':
-    # print(visualise_pred(n_samples=6))
-    predictor = RegionPredictor()
-    predictor.predict_region('Indonesia', 'Berawa')
