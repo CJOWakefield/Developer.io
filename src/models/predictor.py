@@ -7,7 +7,7 @@ import asyncio
 import matplotlib.pyplot as plt
 from src.models.trainer import transformer, UNet
 from PIL import Image
-from src.data.api_downloader import SatelliteDownloader
+from src.data.downloader import SatelliteDownloader
 from torch.utils.data import Dataset, DataLoader
 from concurrent.futures import ThreadPoolExecutor
 import threading

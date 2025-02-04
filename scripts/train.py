@@ -4,4 +4,4 @@ def main(epochs):
     train_model(epochs=epochs)
 
 if __name__ == '__main__':
-    main(15)
+    main(35)
