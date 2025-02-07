@@ -149,4 +149,5 @@ class RegionPredictor:
 if __name__ == '__main__':
     predictor = RegionPredictor()
     asyncio.run(predictor.predict_region(country='Jamaica',
-                                         city='Kingston'))
+                                         city='Kingston',
+                                         postcode='JN1'))

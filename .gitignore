@@ -1,0 +1,7 @@
+.env
+package_check.py
+data/
+.ipynb_checkpoints/
+service/
+models/
+test.py

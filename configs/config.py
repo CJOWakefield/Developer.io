@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 import os
+import yaml
 from pathlib import Path
 
 # Get the base directory (where .env file is located)
@@ -29,3 +30,4 @@ class CloudConfig:
 
 if __name__ == '__main__':
     print(BASE_DIR)
+    CloudConfig().validate()

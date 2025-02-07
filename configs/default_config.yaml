@@ -1,0 +1,51 @@
+# Model Configuration
+model:
+  name: "cv_model"
+  backbone: "resnet50"
+  pretrained: true
+  num_classes: 10
+  input_size: [224, 224]
+
+# Training Configuration
+training:
+  batch_size: 32
+  num_epochs: 100
+  learning_rate: 0.001
+  optimizer:
+    name: "adam"
+    weight_decay: 0.0001
+  scheduler:
+    name: "cosine"
+    T_max: 100
+    eta_min: 1e-6
+  early_stopping:
+    patience: 10
+    min_delta: 0.001
+
+# Data Configuration
+data:
+  train_path: "data/train"
+  val_path: "data/val"
+  test_path: "data/test"
+  num_workers: 4
+  augmentations:
+    horizontal_flip: true
+    vertical_flip: false
+    random_rotate: 10
+    normalize:
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+
+# Logging Configuration
+logging:
+  experiment_name: "cv_experiment"
+  save_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  log_interval: 100
+  save_interval: 1
+
+# Hardware Configuration
+hardware:
+  device: "cuda"
+  gpu_ids: [0]
+  seed: 42

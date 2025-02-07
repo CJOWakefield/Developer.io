@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from fastapi import FastAPI
-from config import CloudConfig
+from configs.config import CloudConfig
 from API.client import CloudStorageClient
 
 # Validate configuration at startup

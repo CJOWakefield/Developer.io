@@ -1,6 +1,6 @@
 from .loader import SatelliteImages, ImagePreview
 from .augment import SatelliteAugmentation, AugmentedSatelliteImages
-from .api_downloader import SatelliteDownloader
+from .downloader import SatelliteDownloader
 
 __all__ = [
     'SatelliteImages',
