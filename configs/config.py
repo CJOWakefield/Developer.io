@@ -27,7 +27,6 @@ class CloudConfig:
         if missing_vars:
             raise ValueError(f"Missing required configuration: {', '.join(missing_vars)}")
 
-
 if __name__ == '__main__':
     print(BASE_DIR)
     CloudConfig().validate()
