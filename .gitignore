@@ -5,3 +5,4 @@ data/
 service/
 models/
 test.py
+prev_files/
