@@ -3,10 +3,15 @@ import cv2
 import random
 import numpy as np
 import matplotlib.pyplot as plt
+import yaml
 from torch.utils.data import Dataset
 from torchvision.utils import make_grid
 import torch
 from src.data.loader import SatelliteImages
+
+# Load the configuration file
+with open('configs/default_config.yaml', 'r') as file:
+    config = yaml.safe_load(file)
 
 ## To-do notes: Add variable file for hardcoded pathing of relative directories. If needed, adjust manipulability of image split to further increase training set.
 
@@ -37,7 +42,7 @@ class SatelliteAugmentation:
     def __init__(self, target_size=(2448, 2448)):
         self.target_size = target_size
         self.rotation_angles = [90, 180, 270]
-        self.visualisation_size = (512, 512)
+        self.visualisation_size = config['model']['input_size']
         os.makedirs(save_directory, exist_ok=True)
 
     def get_quarter(self, image, quarter_idx):

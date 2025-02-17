@@ -11,6 +11,11 @@ from src.data.downloader import SatelliteDownloader
 from torch.utils.data import Dataset, DataLoader
 from concurrent.futures import ThreadPoolExecutor
 import threading
+import yaml
+
+# Load the configuration file
+with open('configs/default_config.yaml', 'r') as file:
+    config = yaml.safe_load(file)
 
 ''' ----- Predictor file summary -----
 
@@ -42,7 +47,7 @@ class ImageBatchDataset(Dataset):
         return len(self.image_files)
 
 @torch.no_grad()
-def visualise_pred(model_path=model_directory, data_path=train_directory, model_version=None, n_samples=3, image_ids=None, batch_size=4):
+def visualise_pred(model_path=model_directory, data_path=train_directory, model_version=None, n_samples=3, image_ids=None, batch_size=config['training']['batch_size']):
     versions = [d for d in os.listdir(model_directory) if os.path.isdir(os.path.join(model_directory, d)) and d.startswith('v_')]
     if not versions: raise ValueError('Model not found.')
 
@@ -66,7 +71,7 @@ def visualise_pred(model_path=model_directory, data_path=train_directory, model_
                                    size=n_samples, replace=False)
 
     dataset = ImageBatchDataset(data_path, sat_files)
-    dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=4, pin_memory=True)
+    dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=config['data']['num_workers'], pin_memory=True)
 
     class_colors = {
         0: (0, 255, 255),    # urban land - Cyan
@@ -133,7 +138,7 @@ class RegionPredictor:
         predictions = visualise_pred(data_path=data_dir,
                                      model_version=self.model_version,
                                      n_samples=num_images,
-                                     batch_size=16)
+                                     batch_size=config['training']['batch_size'])
 
         def save_prediction(pred_data):
             _, mask, id = pred_data
@@ -141,7 +146,7 @@ class RegionPredictor:
                 output_path = os.path.join(data_dir, f'{id}_mask.png')
                 Image.fromarray(mask.astype(np.uint8)).save(output_path, format='PNG')
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=config['data']['num_workers']) as executor:
             list(executor.map(save_prediction, predictions))
 
         return data_dir

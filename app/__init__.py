@@ -8,13 +8,13 @@ project_root = str(Path(__file__).parent.parent)
 sys.path.append(project_root)
 
 from src.models.predictor import RegionPredictor
-from api.client import CloudStorageClient
+from api.cloud_storage_client import CloudStorageClient
 
 predictor = None
 cloud_client = None
 
 def create_app():
-    app = Flask(__name__)
+    app = Flask(__name__, template_folder='templates', static_folder='static')
     
     # Initialize global objects
     global predictor, cloud_client

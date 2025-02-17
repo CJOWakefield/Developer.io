@@ -13,16 +13,24 @@ from torch.nn import functional as F
 from src.data.loader import SatelliteImages
 from torch.cuda.amp import autocast, GradScaler
 import multiprocessing
+import yaml
+
+
+with open('configs/default_config.yaml', 'r') as file:
+    config = yaml.safe_load(file)
+
 multiprocessing.set_start_method('spawn', force=True)
-from torch.amp import GradScaler, autocast
 
 base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 model_directory = os.path.join(base_directory, 'models')
 
 # Transformer
-transformer = transforms.Compose([transforms.ToTensor(),
-                                  transforms.Resize((256, 256), antialias=False),
-                                  transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+transformer = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Resize(config['model']['input_size'], antialias=False),
+    transforms.Normalize(mean=config['data']['augmentations']['normalize']['mean'],
+                         std=config['data']['augmentations']['normalize']['std'])
+])
 
 class ResidualBlock(nn.Module):
     def __init__(self, input_dim, output_dim, dropout):
@@ -151,7 +159,7 @@ class ModelInit:
 
 class Train:
     def __init__(self, data, model, optimiser, loss, epochs, batch_size, model_directory=model_directory, val_data=None):
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device(config['hardware']['device'] if torch.cuda.is_available() else 'cpu')
         self.model = nn.DataParallel(model) if torch.cuda.device_count() > 1 else model
         self.model = self.model.to(self.device)
 
@@ -169,17 +177,17 @@ class Train:
             data,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=0
+            num_workers=config['data']['num_workers']
         )
 
         self.load_val = DataLoader(
             val_data,
             batch_size=batch_size,
             shuffle=False,
-            num_workers=0
+            num_workers=config['data']['num_workers']
         ) if val_data else None
 
-        self.scheduler = OneCycleLR(optimiser, max_lr=0.01, epochs=epochs,
+        self.scheduler = OneCycleLR(optimiser, max_lr=config['training']['learning_rate'], epochs=epochs,
                                 steps_per_epoch=len(self.load_train))
 
     def train_epoch(self, e):
@@ -288,9 +296,9 @@ class FocalLoss(nn.Module):
         else:
             return focal_loss.sum()
 
-def train_model(epochs=5):
+def train_model(epochs=config['training']['num_epochs']):
     model = ModelInit().get_model()
     training_data = SatelliteImages(os.path.join(base_directory, 'data', 'train'), transform=transformer)
-    optimiser = torch.optim.AdamW(model.parameters(), lr=0.01, weight_decay=0.01)
-    trainer = Train(model=model, data=training_data, optimiser=optimiser, loss=FocalLoss(gamma=2.0), epochs=epochs, batch_size=16)
+    optimiser = torch.optim.AdamW(model.parameters(), lr=config['training']['learning_rate'], weight_decay=config['training']['optimizer']['weight_decay'])
+    trainer = Train(model=model, data=training_data, optimiser=optimiser, loss=FocalLoss(gamma=2.0), epochs=epochs, batch_size=config['training']['batch_size'])
     return trainer.train()

@@ -1,23 +1,22 @@
-# GCP Configuration (credentials loaded from .env)
+# Cloud Configuration
+
 gcp:
-  # These values are loaded from environment variables
   project_id: ${GCP_PROJECT_ID}
   bucket_name: ${GCP_BUCKET_NAME}
   region: ${GCP_REGION}
 
 storage:
   paths:
-    # Main data directories
     models: "models"
     raw_data: "raw_data"
     processed_data: "processed_data"
     logs: "logs"
-    
+
   model_storage:
     checkpoints: "models/checkpoints"
     final: "models/final"
     artifacts: "models/artifacts"
-    
+
   data_storage:
     train: "processed_data/train"
     val: "processed_data/val"
@@ -25,12 +24,12 @@ storage:
 
 training:
   metrics_logging: true
-  model_checkpoint_frequency: 1  # Save checkpoint every N epochs
+  model_checkpoint_frequency: 1
   save_best_only: true
-  
+
 monitoring:
   enable_cloud_logging: true
-  log_metrics_interval: 100  # Log metrics every N steps
+  log_metrics_interval: 100
   tensorboard:
     enabled: true
     log_dir: "logs/tensorboard"

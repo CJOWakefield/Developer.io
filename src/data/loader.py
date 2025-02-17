@@ -8,6 +8,11 @@ from torch.utils.data import Dataset
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from torch.nn import functional as F
+import yaml
+
+# Load the configuration file
+with open('configs/default_config.yaml', 'r') as file:
+    config = yaml.safe_load(file)
 
 ''' ----- Loader file summary -----
 
@@ -66,7 +71,7 @@ class SatelliteImages(Dataset):
             mask_tensor[torch.all(mask_torch == torch.tensor(rgb, device=self.device).view(1, 1, 3), dim=2)] = class_idx
 
         return F.interpolate(mask_tensor.unsqueeze(0).unsqueeze(0).float(),
-                           size=(256, 256), mode='nearest').squeeze().long()
+                           size=config['model']['input_size'], mode='nearest').squeeze().long()
 
     def __getitem__(self, i):
         with self.cache_lock:

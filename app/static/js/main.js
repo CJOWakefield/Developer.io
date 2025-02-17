@@ -1,16 +1,13 @@
 let map, drawnItems, selectedLocation;
-
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize map
     map = L.map('map').setView([0, 0], 2);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors'
     }).addTo(map);
-
     // Initialize drawing controls
     drawnItems = new L.FeatureGroup();
     map.addLayer(drawnItems);
-
     const drawControl = new L.Control.Draw({
         draw: {
             polygon: true,
@@ -25,7 +22,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     map.addControl(drawControl);
-
     // Location search
     const searchInput = document.getElementById('locationSearch');
     const suggestionsDiv = document.getElementById('suggestions');
@@ -51,14 +47,12 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Error fetching suggestions:', error);
         }
     }, 300));
-
     // Drawing events
     map.on('draw:created', function(e) {
         drawnItems.clearLayers();
         drawnItems.addLayer(e.layer);
         document.getElementById('analyzeButton').disabled = false;
     });
-
     // Analyze button
     document.getElementById('analyzeButton').addEventListener('click', async function() {
         if (!selectedLocation || drawnItems.getLayers().length === 0) return;
@@ -89,7 +83,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 });
-
 function selectLocation(location) {
     selectedLocation = location;
     document.getElementById('locationSearch').value = location.name;
@@ -98,7 +91,6 @@ function selectLocation(location) {
     
     map.setView([location.lat, location.lng], 12);
 }
-
 async function displayResults(predictions) {
     const resultsDiv = document.getElementById('results');
     const predictionResultsDiv = document.getElementById('predictionResults');
@@ -138,7 +130,6 @@ async function displayResults(predictions) {
     
     predictionResultsDiv.innerHTML = resultHTML;
 }
-
 function debounce(func, wait) {
     let timeout;
     return function executedFunction(...args) {
