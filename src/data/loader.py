@@ -10,8 +10,9 @@ from concurrent.futures import ThreadPoolExecutor
 from torch.nn import functional as F
 import yaml
 
-# Load the configuration file
-with open('configs/default_config.yaml', 'r') as file:
+base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+with open(os.path.join(base_directory, 'configs', 'default_config.yaml'), 'r') as file:
     config = yaml.safe_load(file)
 
 ''' ----- Loader file summary -----
@@ -31,7 +32,7 @@ with open('configs/default_config.yaml', 'r') as file:
 
 '''
 
-base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 class SatelliteImages(Dataset):
     def __init__(self, directory, transform=None, num_threads=4, cache_size=100):

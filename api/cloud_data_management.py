@@ -2,12 +2,11 @@ import os
 from pathlib import Path
 import sys
 import time
+from api.cloud_storage_client import CloudStorageClient
+from typing import List, Set
 
 project_root = str(Path(__file__).parent.parent)
 sys.path.append(project_root)
-
-from api.client import CloudStorageClient
-from typing import List, Set
 
 class FileManager:
     def __init__(self):
@@ -24,7 +23,7 @@ class FileManager:
                     local_files.add(relative_path)
                     
         return local_files
-    
+     
     def get_cloud_files(self, prefix: str) -> Set[str]:
         return set(self.cloud_client.list_files(prefix=prefix))
     
@@ -74,7 +73,7 @@ def main():
             print(f"Error syncing {local_dir}: {str(e)}")
     
     elapsed_time = time.time() - start_time
-    print(f"\nSync complete! Uploaded {total_uploaded} new files in {elapsed_time:.2f} seconds")
+    print(f"Uploaded {total_uploaded} new files in {elapsed_time:.2f} seconds")
 
 if __name__ == "__main__":
     main()

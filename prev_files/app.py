@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, jsonify
-from api.client import CloudStorageClient
+from api.cloud_storage_client import CloudStorageClient
 from src.models.predictor import RegionPredictor
 from pathlib import Path
 import os

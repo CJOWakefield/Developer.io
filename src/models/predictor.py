@@ -12,9 +12,15 @@ from torch.utils.data import Dataset, DataLoader
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import yaml
+from google.cloud import storage
+from io import BytesIO
+from typing import Union, List, Optional, Dict
 
-# Load the configuration file
-with open('configs/default_config.yaml', 'r') as file:
+base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+train_directory = os.path.join(base_directory, 'data', 'train')
+model_directory = os.path.join(base_directory, 'data', 'models')
+
+with open(os.path.join(base_directory, 'configs', 'default_config.yaml'), 'r') as file:
     config = yaml.safe_load(file)
 
 ''' ----- Predictor file summary -----
@@ -27,10 +33,6 @@ with open('configs/default_config.yaml', 'r') as file:
     >> predict_region - Highlights specific region with high % specific land type with annotation.
 
 '''
-
-base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-train_directory = os.path.join(base_directory, 'data', 'train')
-model_directory = os.path.join(base_directory, 'models')
 
 class ImageBatchDataset(Dataset):
     def __init__(self, data_path, image_files):
@@ -114,42 +116,162 @@ def visualise_pred(model_path=model_directory, data_path=train_directory, model_
     return results
 
 class RegionPredictor:
-    def __init__(self, base_dir=base_directory, model_version=None):
+    def __init__(self, base_dir=base_directory, model_version=None, cache_size=100):
         self.base_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
         self.generated_dir = os.path.join(self.base_dir, 'data', 'downloaded')
-        self.model_version = model_version
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.thread_lock = threading.Lock()
+        self.storage_client = storage.Client()
+        self.cache_size = cache_size
+        self.image_cache = {}
+        self.prediction_cache = {}
+
+        if not model_version:
+            versions = [d for d in os.listdir(model_directory) if os.path.isdir(os.path.join(model_directory, d)) and d.startswith('v_')]
+            if not versions: raise ValueError('No models available.')
+            self.model_version = sorted(versions, key=lambda x: (int(x.split('_')[1]), int(x.split('_')[2])))[-1]
+        self.model = UNet().to(self.device)
+        self.model.load_state_dict(torch.load(os.path.join(self.base_dir, 'models', self.model_version, 'model.pt'), weights_only=True)['model_state_dict'])
+        self.model.eval()
+        
+    @torch.no_grad()
+    def predict_from_tensor(self, image_tensor):
+        prediction = torch.argmax(self.model(image_tensor)['segmentation'], dim=1)[0].cpu()
+        class_colors = {
+            0: (0, 255, 255),    # urban land - Cyan
+            1: (255, 255, 0),    # agricultural land - Yellow
+            2: (255, 0, 255),    # rangeland - Magenta
+            3: (0, 255, 0),      # forest land - Green
+            4: (0, 0, 255),      # water - Dark blue
+            5: (255, 255, 255),  # barren land - White
+            6: (0, 0, 0)         # unknown - Black
+        }
+        
+        pred_rgb = np.zeros((*prediction.shape, 3), dtype=np.uint8)
+        for class_idx, color in class_colors.items():
+            pred_rgb[prediction == class_idx] = color
+            
+        return pred_rgb
 
     @torch.no_grad()
-    async def predict_region(self, country, city, postcode=None, grid_size_km=0.5, num_images=16):
-        downloader = SatelliteDownloader()
-        # Await the async process_location call
-        directory = await downloader.process_location(country, city, postcode, grid_size_km, num_images)
+    def predict_from_file(self, file_path: str) -> np.ndarray:
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Image file not found: {file_path}")
+            
+        if not file_path.endswith('_sat.jpg'):
+            raise ValueError("File must be a satellite image with '_sat.jpg' extension")
+            
+        image = cv2.cvtColor(cv2.imread(file_path), cv2.COLOR_BGR2RGB)
+        image_tensor = transformer(image).unsqueeze(0).to(self.device)
+        prediction = self.predict_from_tensor(image_tensor)
+        cache_key = ('file', file_path)
+        self._add_to_cache(cache_key, image, prediction)
+        return prediction
 
-        if directory is None:
-            raise ValueError("Failed to download images")
+    @torch.no_grad()
+    def predict_from_bucket(self, bucket_name: str, blob_path: str) -> np.ndarray:
+        cache_key = ('bucket', bucket_name, blob_path)
+        cached_prediction = self._get_from_cache(cache_key)
+        if cached_prediction is not None:
+            return cached_prediction
 
-        data_dir = os.path.join(self.generated_dir, directory)
+        try:
+            bucket = self.storage_client.bucket(bucket_name)
+            blob = bucket.blob(blob_path)
+            image_bytes = BytesIO()
+            blob.download_to_file(image_bytes)
+            image_bytes.seek(0)
+            image_array = np.asarray(bytearray(image_bytes.read()), dtype=np.uint8)
+            image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            image_tensor = transformer(image).unsqueeze(0).to(self.device)
+            prediction = self.predict_from_tensor(image_tensor)
+            self._add_to_cache(cache_key, image, prediction)
+            return prediction
 
-        if not [f for f in os.listdir(data_dir) if f.endswith('_sat.jpg')]:
-            raise ValueError(f"No satellite images found in {data_dir}")
-
-        predictions = visualise_pred(data_path=data_dir,
-                                     model_version=self.model_version,
-                                     n_samples=num_images,
-                                     batch_size=config['training']['batch_size'])
-
+        except Exception as e:
+            raise ValueError(f"Failed to process image from bucket: {str(e)}")
+        
+    @torch.no_grad()
+    async def predict_region(self, images: Union[List[torch.Tensor], List[str]], save_dir: Optional[str] = None) -> Dict:
+        predictions = {}
+        
+        if not images:
+            raise ValueError("No images provided")
+            
+        if isinstance(images[0], str):
+            for img_path in images:
+                if not img_path.endswith('_sat.jpg'):
+                    continue
+                    
+                image = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
+                image_tensor = transformer(image).unsqueeze(0).to(self.device)
+                pred_rgb = self.predict_from_tensor(image_tensor)
+                
+                image_id = os.path.basename(img_path).replace('_sat.jpg', '')
+                predictions[image_id] = {
+                    'original': image,
+                    'mask': pred_rgb,
+                    'path': img_path
+                }
+                
+        elif isinstance(images[0], torch.Tensor):
+            for idx, img_tensor in enumerate(images):
+                if img_tensor.dim() == 3:
+                    img_tensor = img_tensor.unsqueeze(0)
+                pred_rgb = self.predict_from_tensor(img_tensor)
+                
+                predictions[f'tensor_{idx}'] = {
+                    'original': img_tensor.cpu().numpy(),
+                    'mask': pred_rgb
+                }
+        
+        if save_dir:
+            await self.save_predictions(predictions, save_dir)
+            
+        return predictions
+    
+    async def save_predictions(self, predictions: Dict, save_dir: str):
+        os.makedirs(save_dir, exist_ok=True)
+        
         def save_prediction(pred_data):
-            _, mask, id = pred_data
+            img_id, data = pred_data
             with self.thread_lock:
-                output_path = os.path.join(data_dir, f'{id}_mask.png')
-                Image.fromarray(mask.astype(np.uint8)).save(output_path, format='PNG')
-
+                # Save original image if from file
+                if 'path' not in data:
+                    orig_path = os.path.join(save_dir, f'{img_id}_sat.jpg')
+                    cv2.imwrite(orig_path, cv2.cvtColor(data['original'], cv2.COLOR_RGB2BGR))
+                
+                # Save mask
+                mask_path = os.path.join(save_dir, f'{img_id}_mask.png')
+                Image.fromarray(data['mask'].astype(np.uint8)).save(mask_path, format='PNG')
+        
         with ThreadPoolExecutor(max_workers=config['data']['num_workers']) as executor:
-            list(executor.map(save_prediction, predictions))
+            list(executor.map(save_prediction, predictions.items()))
 
-        return data_dir
+    def _add_to_cache(self, key: tuple, image: np.ndarray, prediction: np.ndarray):
+        if len(self.image_cache) >= self.cache_size:
+            oldest_key, oldest_pred = self.prediction_cache.popitem(last=False)
+            _, oldest_img = self.image_cache.popitem(last=False)
+            self._save_cached_data(oldest_key, oldest_img, oldest_pred)
+
+        self.image_cache[key] = image
+        self.prediction_cache[key] = prediction
+
+    def _save_cached_data(self, key: tuple, image: np.ndarray, prediction: np.ndarray):
+        cache_dir = os.path.join(self.generated_dir, 'cache')
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        if key[0] == 'file':
+            base_filename = os.path.basename(key[1]).replace('_sat.jpg', '')
+        else:
+            base_filename = key[2].replace('/', '_').replace('_sat.jpg', '')
+        
+        image_path = os.path.join(cache_dir, f"{base_filename}_sat.jpg")
+        cv2.imwrite(image_path, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+        
+        pred_path = os.path.join(cache_dir, f"{base_filename}_mask.png")
+        Image.fromarray(prediction.astype(np.uint8)).save(pred_path, format='PNG')
 
 if __name__ == '__main__':
     predictor = RegionPredictor()

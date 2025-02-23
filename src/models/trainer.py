@@ -15,14 +15,14 @@ from torch.cuda.amp import autocast, GradScaler
 import multiprocessing
 import yaml
 
-
-with open('configs/default_config.yaml', 'r') as file:
+base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+model_directory = os.path.join(base_directory, 'models')
+with open(os.path.join(base_directory, 'configs', 'default_config.yaml'), 'r') as file:
     config = yaml.safe_load(file)
 
 multiprocessing.set_start_method('spawn', force=True)
 
-base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-model_directory = os.path.join(base_directory, 'models')
+
 
 # Transformer
 transformer = transforms.Compose([

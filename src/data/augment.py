@@ -9,8 +9,10 @@ from torchvision.utils import make_grid
 import torch
 from src.data.loader import SatelliteImages
 
-# Load the configuration file
-with open('configs/default_config.yaml', 'r') as file:
+base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+save_directory = os.path.join(base_directory, 'data', 'augmented')
+
+with open(os.path.join(base_directory, 'configs', 'default_config.yaml'), 'r') as file:
     config = yaml.safe_load(file)
 
 ## To-do notes: Add variable file for hardcoded pathing of relative directories. If needed, adjust manipulability of image split to further increase training set.
@@ -35,8 +37,6 @@ with open('configs/default_config.yaml', 'r') as file:
 
 '''
 
-base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-save_directory = os.path.join(base_directory, 'data', 'augmented')
 
 class SatelliteAugmentation:
     def __init__(self, target_size=(2448, 2448)):
