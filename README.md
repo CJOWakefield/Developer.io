@@ -125,7 +125,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Contact
 
-Your Name - CJOWakefield@outlook.com
-Project Link: [https://github.com/CJOWakefield/Developer.io](https://github.com/CJOWakefield/Developer.io)
+CJOWakefield@outlook.com
+[https://github.com/CJOWakefield/Developer.io](https://github.com/CJOWakefield/Developer.io)
 
 ---
