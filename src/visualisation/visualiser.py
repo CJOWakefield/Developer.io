@@ -7,12 +7,13 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
+from typing import List, Tuple, Dict
 from src.data.loader import SatelliteImages
 
 ## Accessory functions for visualisation
 class LandTypeHighlighter:
-    def __init__(self):
-        self.class_colors = {
+    def __init__(self) -> None:
+        self.class_colors: Dict[str, Tuple[int, int, int]] = {
             'urban': (0, 255, 255),
             'agriculture': (255, 255, 0),
             'rangeland': (255, 0, 255),
@@ -22,55 +23,42 @@ class LandTypeHighlighter:
             'unknown': (0, 0, 0)
         }
 
-    def analyze_regions(self, image, mask, valid_types, threshold=0.9):
-        """Highlight regions where specified land types exceed threshold"""
+    # Highlight regions where specified land types exceed threshold
+    def analyze_regions(self, image: np.ndarray, mask: np.ndarray, valid_types: List[str], threshold: float = 0.9) -> np.ndarray:
+        
         result = image.copy()
-
-        # Create binary mask for all valid types
         binary_mask = np.zeros(mask.shape[:2], dtype=np.uint8)
         for land_type in valid_types:
             color = self.class_colors[land_type]
             binary_mask |= np.all(mask == color, axis=2)
 
-        # Find contours
         contours, _ = cv2.findContours(binary_mask.astype(np.uint8),
                                        cv2.RETR_EXTERNAL,
                                        cv2.CHAIN_APPROX_SIMPLE)
 
-        # Analyze each contour
         for contour in contours:
-            # Create mask for current contour
             contour_mask = np.zeros_like(binary_mask)
             cv2.drawContours(contour_mask, [contour], -1, 1, -1)
-
-            # Calculate percentage of valid types within contour
             total_pixels = np.sum(contour_mask)
             if total_pixels == 0: continue
 
             valid_pixels = np.sum(binary_mask & contour_mask)
             percentage = (valid_pixels / total_pixels) * 100
 
-            # Draw contour and percentage if above threshold
             if percentage >= threshold * 100:
                 cv2.drawContours(result, [contour], -1, (0, 0, 255), 2)
-
-                # Add percentage text
                 M = cv2.moments(contour)
                 if M['m00'] != 0:
                     cx, cy = int(M['m10']/M['m00']), int(M['m01']/M['m00'])
                     text = f'{percentage:.1f}%'
-
-                    # Get text size for background
                     (w, h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-
-                    # Draw text background and text
                     cv2.rectangle(result, (cx-w//2-5, cy-h-5), (cx+w//2+5, cy+5), (255, 255, 255), -1)
                     cv2.putText(result, text, (cx-w//2, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
 
         return result
 
-    def visualize(self, image, mask, valid_types, threshold=0.9):
-        """Display original, mask, and analyzed images"""
+    # Display original, mask, and analyzed images
+    def visualize(self, image: np.ndarray, mask: np.ndarray, valid_types: List[str], threshold: float = 0.9) -> None:
         highlighted = self.analyze_regions(image, mask, valid_types, threshold)
 
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
@@ -94,7 +82,7 @@ class ImagePreview:
     def __init__(self, directory: str, testing: bool = False) -> None:
         self.directory = directory
         self.testing = testing
-        self.class_to_rgb = {
+        self.class_to_rgb: Dict[int, Tuple[int, int, int]] = {
             0: (0, 255, 255), 
             1: (255, 255, 0), 
             2: (255, 0, 255),
@@ -102,7 +90,7 @@ class ImagePreview:
             4: (0, 0, 255), 
             5: (255, 255, 255), 
             6: (0, 0, 0)
-            }
+        }
 
     # Displays satellite image and optionally its mask using matplotlib
     def preview(self, img_id: int, show_mask: bool = False) -> None:
@@ -126,23 +114,9 @@ class ImagePreview:
             plt.title('Satellite Image')
             plt.show()
 
-# Example usage:
-"""
-highlighter = LandTypeHighlighter()
-
-# Read images
-image = cv2.imread('satellite_image.jpg')
-mask = cv2.imread('mask.png')
-
-# Analyze agricultural areas that are at least 90% agriculture or rangeland
-valid_types = ['agriculture', 'rangeland']
-highlighter.visualize_threshold_analysis(
-    image, mask, 'agriculture', valid_types, threshold=0.9)
-"""
-
 if __name__ == '__main__':
     highlighter = LandTypeHighlighter()
-    image = cv2.imread(os.path.join(base_dir, 'data', 'train', '119_sat.jpg'))
-    mask = cv2.imread(os.path.join(base_dir, 'data', 'train', '119_mask.png'))
-    valid_types = ['agriculture', 'rangeland']
+    image: np.ndarray = cv2.imread(os.path.join(base_dir, 'data', 'train', '119_sat.jpg'))
+    mask: np.ndarray = cv2.imread(os.path.join(base_dir, 'data', 'train', '119_mask.png'))
+    valid_types: List[str] = ['agriculture', 'rangeland']
     highlighter.visualize(image, mask, valid_types, threshold=0.9)
