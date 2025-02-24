@@ -34,11 +34,10 @@ class SatelliteAPI:
         try:
             if self.mode == 'grid':
                 image_paths = self.downloader.download_grid(lat, lon, cache)
-                return {'status': 'success', 'image_paths': image_paths}
-            elif self.mode == 'single':
-                image_paths = self.downloader._download_image_async(lat, lon, cache)
-                return {'status': 'success', 'image_path': image_paths}
+            else: image_paths = await self.downloader._download_image_async(lat, lon, cache)
             self.images = image_paths
+            if self.images: return {'status': 'success', 'image_path': image_paths}
+            else: return {'status': 'error', 'message': 'No images found'}
         except Exception as e:
             return {'status': 'error', 'message': str(e)}
 

@@ -1,5 +1,6 @@
-from .visualiser import LandTypeHighlighter
+from .visualiser import LandTypeHighlighter, ImagePreview
 
 __all__ = [
-    'LandTypeHighlighter'
+    'LandTypeHighlighter',
+    'ImagePreview'
 ]

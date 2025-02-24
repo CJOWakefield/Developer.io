@@ -7,7 +7,6 @@ import asyncio
 import matplotlib.pyplot as plt
 from src.models.trainer import transformer, UNet
 from PIL import Image
-from src.data.downloader import SatelliteDownloader
 from torch.utils.data import Dataset, DataLoader
 from concurrent.futures import ThreadPoolExecutor
 import threading
@@ -48,73 +47,6 @@ class ImageBatchDataset(Dataset):
     def __len__(self):
         return len(self.image_files)
 
-@torch.no_grad()
-def visualise_pred(model_path=model_directory, data_path=train_directory, model_version=None, n_samples=3, image_ids=None, batch_size=config['training']['batch_size']):
-    versions = [d for d in os.listdir(model_directory) if os.path.isdir(os.path.join(model_directory, d)) and d.startswith('v_')]
-    if not versions: raise ValueError('Model not found.')
-
-    if model_version: model_path = os.path.join(model_directory, model_version, 'model.pt')
-    else:
-        latest_version = sorted(versions, key=lambda x: (int(x.split('_')[1]), int(x.split('_')[2])))[-1]
-        model_path = os.path.join(model_directory, latest_version, 'model.pt')
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = UNet().to(device)
-    model.load_state_dict(torch.load(model_path, weights_only=True)['model_state_dict'])
-    model.eval()
-
-    if image_ids:
-        image_ids = [image_ids] if isinstance(image_ids, (int, str)) else image_ids
-        sat_files = [f for id in image_ids for f in os.listdir(data_path) if f.endswith(f"_sat.jpg")]
-        if not sat_files: raise ValueError("No matching images found")
-        n_samples = len(sat_files)
-    else:
-        sat_files = np.random.choice([f for f in os.listdir(data_path) if f.endswith('_sat.jpg')],
-                                   size=n_samples, replace=False)
-
-    dataset = ImageBatchDataset(data_path, sat_files)
-    dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=config['data']['num_workers'], pin_memory=True)
-
-    class_colors = {
-        0: (0, 255, 255),    # urban land - Cyan
-        1: (255, 255, 0),    # agricultural land - Yellow
-        2: (255, 0, 255),    # rangeland - Magenta
-        3: (0, 255, 0),      # forest land - Green
-        4: (0, 0, 255),      # water - Dark blue
-        5: (255, 255, 255),  # barren land - White
-        6: (0, 0, 0)         # unknown - Black
-    }
-
-    results = []
-    for batch_tensors, batch_images, batch_ids in dataloader:
-        batch_tensors = batch_tensors.to(device)
-        predictions = torch.argmax(model(batch_tensors)['segmentation'], dim=1).cpu()
-
-        for pred, orig_img, img_id in zip(predictions, batch_images, batch_ids):
-            pred_rgb = np.zeros((*pred.shape, 3), dtype=np.uint8)
-            for class_idx, color in class_colors.items():
-                pred_rgb[pred == class_idx] = color
-            results.append((orig_img, pred_rgb, img_id))
-
-    rows = 1
-    cols = n_samples
-    plt.figure(figsize=(6*cols, 8*rows))
-
-    for idx, (sat_img, pred_rgb, image_id) in enumerate(results):
-        plt.subplot(rows*2, cols, idx+1)
-        plt.title(f'Original Image (ID: {image_id})')
-        plt.imshow(sat_img)
-        plt.axis('off')
-
-        plt.subplot(rows*2, cols, idx+1+cols)
-        plt.title(f'Predicted Mask (ID: {image_id})')
-        plt.imshow(pred_rgb)
-        plt.axis('off')
-
-    plt.tight_layout()
-    plt.show()
-    return results
-
 class RegionPredictor:
     def __init__(self, base_dir=base_directory, model_version=None, cache_size=100):
         self.base_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
@@ -125,30 +57,28 @@ class RegionPredictor:
         self.cache_size = cache_size
         self.image_cache = {}
         self.prediction_cache = {}
+        self.classes = {'urban': (0, 255, 255),    # urban land - Cyan
+                        'agricultural': (255, 255, 0),    # agricultural land - Yellow
+                        'rangeland': (255, 0, 255),    # rangeland - Magenta
+                        'forest': (0, 255, 0),      # forest land - Green
+                        'water': (0, 0, 255),      # water - Dark blue
+                        'barren': (255, 255, 255),  # barren land - White
+                        'unidentified': (0, 0, 0)}         # unknown - Black
 
         if not model_version:
             versions = [d for d in os.listdir(model_directory) if os.path.isdir(os.path.join(model_directory, d)) and d.startswith('v_')]
             if not versions: raise ValueError('No models available.')
             self.model_version = sorted(versions, key=lambda x: (int(x.split('_')[1]), int(x.split('_')[2])))[-1]
         self.model = UNet().to(self.device)
-        self.model.load_state_dict(torch.load(os.path.join(self.base_dir, 'models', self.model_version, 'model.pt'), weights_only=True)['model_state_dict'])
+        self.model.load_state_dict(torch.load(os.path.join(self.base_dir, 'data', 'models', self.model_version, 'model.pt'), weights_only=True)['model_state_dict'])
         self.model.eval()
         
     @torch.no_grad()
     def predict_from_tensor(self, image_tensor):
         prediction = torch.argmax(self.model(image_tensor)['segmentation'], dim=1)[0].cpu()
-        class_colors = {
-            0: (0, 255, 255),    # urban land - Cyan
-            1: (255, 255, 0),    # agricultural land - Yellow
-            2: (255, 0, 255),    # rangeland - Magenta
-            3: (0, 255, 0),      # forest land - Green
-            4: (0, 0, 255),      # water - Dark blue
-            5: (255, 255, 255),  # barren land - White
-            6: (0, 0, 0)         # unknown - Black
-        }
         
         pred_rgb = np.zeros((*prediction.shape, 3), dtype=np.uint8)
-        for class_idx, color in class_colors.items():
+        for class_idx, color in self.classes.items():
             pred_rgb[prediction == class_idx] = color
             
         return pred_rgb
@@ -228,8 +158,15 @@ class RegionPredictor:
         
         if save_dir:
             await self.save_predictions(predictions, save_dir)
-            
         return predictions
+    
+    def get_land_proportions(self, mask: np.ndarray) -> Dict[str, float]:
+        pixel_total = mask.shape[0] * mask.shape[1]
+        proportions = {}
+        for class_name, class_color in self.classes.items():
+            class_pixels = np.sum(np.all(mask == class_color, axis=-1))
+            proportions[class_name] = class_pixels / pixel_total
+        return proportions
     
     async def save_predictions(self, predictions: Dict, save_dir: str):
         os.makedirs(save_dir, exist_ok=True)
@@ -237,12 +174,10 @@ class RegionPredictor:
         def save_prediction(pred_data):
             img_id, data = pred_data
             with self.thread_lock:
-                # Save original image if from file
                 if 'path' not in data:
                     orig_path = os.path.join(save_dir, f'{img_id}_sat.jpg')
                     cv2.imwrite(orig_path, cv2.cvtColor(data['original'], cv2.COLOR_RGB2BGR))
                 
-                # Save mask
                 mask_path = os.path.join(save_dir, f'{img_id}_mask.png')
                 Image.fromarray(data['mask'].astype(np.uint8)).save(mask_path, format='PNG')
         
@@ -273,8 +208,78 @@ class RegionPredictor:
         pred_path = os.path.join(cache_dir, f"{base_filename}_mask.png")
         Image.fromarray(prediction.astype(np.uint8)).save(pred_path, format='PNG')
 
-if __name__ == '__main__':
-    predictor = RegionPredictor()
-    asyncio.run(predictor.predict_region(country='Jamaica',
-                                         city='Kingston',
-                                         postcode='JN1'))
+''' _______________________________________________________________________________________________________'''
+
+## Visualisation function. Executes prediction on random training images and visualises w/ plt.
+@torch.no_grad()
+def visualise_pred(model_path=model_directory, data_path=train_directory, model_version=None, n_samples=3, image_ids=None, batch_size=config['training']['batch_size']):
+    versions = [d for d in os.listdir(model_directory) if os.path.isdir(os.path.join(model_directory, d)) and d.startswith('v_')]
+    if not versions: raise ValueError('Model not found.')
+
+    if model_version: model_path = os.path.join(model_directory, model_version, 'model.pt')
+    else:
+        latest_version = sorted(versions, key=lambda x: (int(x.split('_')[1]), int(x.split('_')[2])))[-1]
+        model_path = os.path.join(model_directory, latest_version, 'model.pt')
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = UNet().to(device)
+    model.load_state_dict(torch.load(model_path, weights_only=True)['model_state_dict'])
+    model.eval()
+
+    if image_ids:
+        image_ids = [image_ids] if isinstance(image_ids, (int, str)) else image_ids
+        sat_files = [f for id in image_ids for f in os.listdir(data_path) if f.endswith(f"_sat.jpg")]
+        if not sat_files: raise ValueError("No matching images found")
+        n_samples = len(sat_files)
+    else:
+        sat_files = np.random.choice([f for f in os.listdir(data_path) if f.endswith('_sat.jpg')],
+                                   size=n_samples, replace=False)
+
+    dataset = ImageBatchDataset(data_path, sat_files)
+    dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=config['data']['num_workers'], pin_memory=True)
+
+    class_colors = {
+        0: (0, 255, 255),    # urban land - Cyan
+        1: (255, 255, 0),    # agricultural land - Yellow
+        2: (255, 0, 255),    # rangeland - Magenta
+        3: (0, 255, 0),      # forest land - Green
+        4: (0, 0, 255),      # water - Dark blue
+        5: (255, 255, 255),  # barren land - White
+        6: (0, 0, 0)         # unknown - Black
+    }
+
+    results = []
+    for batch_tensors, batch_images, batch_ids in dataloader:
+        batch_tensors = batch_tensors.to(device)
+        predictions = torch.argmax(model(batch_tensors)['segmentation'], dim=1).cpu()
+
+        for pred, orig_img, img_id in zip(predictions, batch_images, batch_ids):
+            pred_rgb = np.zeros((*pred.shape, 3), dtype=np.uint8)
+            for class_idx, color in class_colors.items():
+                pred_rgb[pred == class_idx] = color
+            results.append((orig_img, pred_rgb, img_id))
+
+    rows = 1
+    cols = n_samples
+    plt.figure(figsize=(6*cols, 8*rows))
+
+    for idx, (sat_img, pred_rgb, image_id) in enumerate(results):
+        plt.subplot(rows*2, cols, idx+1)
+        plt.title(f'Original Image (ID: {image_id})')
+        plt.imshow(sat_img)
+        plt.axis('off')
+
+        plt.subplot(rows*2, cols, idx+1+cols)
+        plt.title(f'Predicted Mask (ID: {image_id})')
+        plt.imshow(pred_rgb)
+        plt.axis('off')
+
+    plt.tight_layout()
+    plt.show()
+    return results
+
+# if __name__ == '__main__':
+#     predictor = RegionPredictor()
+#     asyncio.run(predictor.predict_region(country='Jamaica',
+#                                          city='Kingston',
+#                                          postcode='JN1'))
