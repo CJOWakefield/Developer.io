@@ -14,19 +14,13 @@ from datetime import datetime
 from dotenv import load_dotenv
 import mimetypes
 
-class Config:
-    """Configuration class for managing environment variables and settings."""
-    
+class Config:    
     def __init__(self):
-        """Initialize configuration with environment variables."""
         load_dotenv()
-        
-        # GCP Configuration
         self.project_id = os.getenv('GCP_PROJECT_ID')
         self.bucket_name = os.getenv('GCP_BUCKET_NAME')
         self.region = os.getenv('GCP_REGION')
-        
-        # Validate required settings
+
         if not all([self.project_id, self.bucket_name, self.region]):
             raise ValueError("Missing required GCP configuration in environment variables")
 
@@ -38,6 +32,7 @@ class CloudStorageClient:
         self.bucket = self.client.bucket(CloudConfig.BUCKET_NAME)
         self.logger = cloud_logging.Client().logger('CloudStorageClient')
 
+    # Upload specified file to specified path in GCP bucket.
     def upload_file(self,
                     source_file: Union[str, Path],
                     destination_path: Optional[str] = None,
@@ -48,7 +43,6 @@ class CloudStorageClient:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             destination_path = f"uploads/{timestamp}_{source_path.name}"
 
-        # Create blob
         blob = self.bucket.blob(destination_path)
         if not content_type: content_type, _ = mimetypes.guess_type(str(source_path))
         if content_type: blob.content_type = content_type
@@ -57,6 +51,7 @@ class CloudStorageClient:
 
         return blob.public_url
 
+    # Upload all files in specified directory to GCP bucket.
     def upload_directory(self,
                          source_dir: Union[str, Path],
                          destination_path: Optional[str] = None) -> List[str]:
@@ -73,12 +68,14 @@ class CloudStorageClient:
 
        return uploaded_files
 
+    # Download specific file from GCP bucket
     def download_file(self, blob_name: str, destination_path: Union[str, Path]) -> Path:
         blob = self.bucket.blob(blob_name)
         destination = Path(destination_path)
         blob.download_to_filename(str(destination))
         return destination
 
+    # Download specific directory from GCP bucket
     def download_directory(self, blob_name: str, destination_path: Union[str, Path]) -> List[str]:
         downloaded_files = []
         blobs = self.bucket.list_blobs(prefix=blob_name)
@@ -95,10 +92,12 @@ class CloudStorageClient:
             
         return downloaded_files
 
+    # Remove file from GCP bucket.
     def delete_file(self, blob_name: str) -> None:
         blob = self.bucket.blob(blob_name)
         blob.delete()
 
+    # Return file names for specified location.
     def list_files(self, prefix: Optional[str] = None, max_results: Optional[int] = None) -> List[str]:
         blobs = self.bucket.list_blobs(prefix=prefix, max_results=max_results)
         return [blob.name for blob in blobs]

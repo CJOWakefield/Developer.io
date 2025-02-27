@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import datetime
 from api.cloud_storage_client import CloudStorageClient
 from typing import List, Set
 
@@ -50,30 +51,52 @@ class FileManager:
             print(f"Error during upload: {str(e)}")
             return []
 
-def main():
+def sync_directories(directories: list[str]):
     file_manager = FileManager()
-    
-    sync_dirs = [
-        ("data/train", "data/train"),
-        ("data/test", "data/test"),
-        ("data/val", "data/val"),
-        ("models", "models"),
-    ]
-    
-    total_uploaded = 0
+    sync_dirs = [(dir, dir) for dir in directories]
+
+    upload_count = 0
     start_time = time.time()
-    
-    for local_dir, cloud_prefix in sync_dirs:
+
+    for local_dir, cloud_dir in sync_dirs:
         try:
-            print(f"\nStarting sync for {local_dir}")
-            uploaded = file_manager.sync_directory(local_dir, cloud_prefix)
-            total_uploaded += len(uploaded)
-            print(f"Completed sync for {local_dir}: {len(uploaded)} files uploaded")
+            print(f'\nInitialising directory sync. {datetime.datetime.now()}')
+            curr_uploads = file_manager.sync_directory(local_dir, cloud_dir)
+            upload_count += curr_uploads
+            print(f'\nSync completed for {local_dir} to {cloud_dir}L {len(upload_count)} files uploaded.')
         except Exception as e:
-            print(f"Error syncing {local_dir}: {str(e)}")
+            print(f'Syncing error for {local_dir}: {str(e)}')
+
+    print(f'\nUpload complete. {time.time() - start_time:.2f} seconds elapsed.')
+
+
+# def main():
+#     file_manager = FileManager()
     
-    elapsed_time = time.time() - start_time
-    print(f"Uploaded {total_uploaded} new files in {elapsed_time:.2f} seconds")
+#     sync_dirs = [
+#         ("data/train", "data/train"),
+#         ("data/test", "data/test"),
+#         ("data/val", "data/val"),
+#         ("models", "models"),
+#     ]
+    
+#     total_uploaded = 0
+#     start_time = time.time()
+    
+#     for local_dir, cloud_prefix in sync_dirs:
+#         try:
+#             print(f"\nStarting sync for {local_dir}")
+#             uploaded = file_manager.sync_directory(local_dir, cloud_prefix)
+#             total_uploaded += len(uploaded)
+#             print(f"Completed sync for {local_dir}: {len(uploaded)} files uploaded")
+#         except Exception as e:
+#             print(f"Error syncing {local_dir}: {str(e)}")
+    
+#     elapsed_time = time.time() - start_time
+#     print(f"Uploaded {total_uploaded} new files in {elapsed_time:.2f} seconds")
 
 if __name__ == "__main__":
-    main()
+    sync_directories([("data/train", "data/train"),
+                      ("data/test", "data/test"),
+                      ("data/val", "data/val"),
+                      ("models", "models")])
