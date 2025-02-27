@@ -32,22 +32,50 @@ with open(os.path.join(base_directory, 'configs', 'default_config.yaml'), 'r') a
 > SatelliteDownloader - Class to leverage GEE API and return satellite image grid for user specified location.
     >> _load_api_key -> Load API key from .env file for GEE API, saved as GOOGLE_MAPS_API_KEY
     >> get_coordinates -> Leverage Nominatim to return lat/lon co-ordinates for user specified country, town (and postcode).
+        >>> Inputs: country (str), city (str), postcode (Optional[str])
     >> get_zoom -> Return API specific zoom parameter based on user specified image demand and image_size by km.
+        >>> Inputs: grid_size_km (float)
     >> calculate_grid -> Calculate relevant grid size per image for specified input parameters.
+        >>> Inputs: center_lat (float), center_lon (float), grid_size_km (float), num_images (int)
     >> download_image -> Execute API call for specific co-ordinates and zoom.
-    >> process_location -> Combine relevant composition functions and execute relevant API call, saving results to ..data/raw folder.
+        >>> Inputs: lat (float), lon (float), area_size (Optional[float]), zoom (Optional[int])
+    >> _init_session -> Initialize aiohttp session for API calls.
+        >>> Inputs: None
+    >> _download_image_async -> Asynchronously download image from API or retrieve from cache.
+        >>> Inputs: lat (float), lon (float), area_size (Optional[float]), zoom (Optional[int])
+    >> _process_batch -> Process a batch of coordinates for downloading.
+        >>> Inputs: batch_coords (List[Tuple]), zoom (int), grid_dim (int), metadata (Dict)
+    >> push_to_cloud -> Upload pending images to cloud storage.
+        >>> Inputs: None
+    >> clear_local_cache -> Remove older images from local cache.
+        >>> Inputs: keep_recent (int)
+    >> process_location -> Combine relevant composition functions and execute relevant API call, saving results to data folder.
+        >>> Inputs: country (str), city (str), postcode (Optional[str]), grid_size_km (float), num_images (int), output_dir (Optional[str])
+    >> save_to_final_location -> Move cached files to final directory.
+        >>> Inputs: final_dir (str)
+    >> get_location -> Get address from latitude and longitude.
+        >>> Inputs: latitude (float), longitude (float)
+    >> _get_cache_key -> Generate cache key from coordinates and zoom.
+        >>> Inputs: lat (float), lon (float), zoom (int)
+    >> _get_cloud_path -> Generate cloud storage path from cache key.
+        >>> Inputs: cache_key (str)
+    >> _check_local_cache -> Check if image exists in local cache.
+        >>> Inputs: lat (float), lon (float), zoom (int)
+    >> _check_cloud_cache -> Check if image exists in cloud cache.
+        >>> Inputs: lat (float), lon (float), zoom (int)
+    >> _save_cache_index -> Save cache index to disk.
+        >>> Inputs: None
 
     >>> Inputs: base_directory/save_directory hardcoded in file. country, city, postcode, grid_size_km, num_images in process_location for user specific output.
 
 '''
 
 class SatelliteDownloader:
-    def __init__(self, batch_size: int = 4, testing: bool = False) -> None:
+    def __init__(self, batch_size=4, thread_limit=16, save_directory=None, testing=False):
         load_dotenv()
         self.api_key = os.getenv('GOOGLE_MAPS_API_KEY')
         if not self.api_key: raise ValueError("API key invalid.")
         
-        # Initialize cloud storage client
         self.cloud_client = None
         if not testing:
             try:
@@ -55,14 +83,18 @@ class SatelliteDownloader:
             except Exception as e:
                 print(f"Warning: Could not initialize cloud storage: {e}")
         
+        if save_directory is None:
+            save_directory = config['data']['output_dir']
+            
+        if not os.path.isabs(save_directory):
+            save_directory = os.path.join(base_directory, save_directory)
+        
         self.base_dir = save_directory
         self.cache_dir = os.path.join(self.base_dir, 'cache')
         
-        # Create a local cache directory for storing downloaded images
         self.local_cache_dir = os.path.join(self.base_dir, 'local_image_cache')
         os.makedirs(self.local_cache_dir, exist_ok=True)
         
-        # Create an index file to track cached images
         self.cache_index_path = os.path.join(self.local_cache_dir, 'cache_index.json')
         if os.path.exists(self.cache_index_path):
             with open(self.cache_index_path, 'r') as f:
@@ -77,31 +109,22 @@ class SatelliteDownloader:
         self.session = None
         self.testing = testing
         
-        # Track which images need to be pushed to GCP
         self.pending_uploads = set()
         
         available_cores = multiprocessing.cpu_count()
         self.num_threads = min(thread_limit, available_cores * 2)
-        
-    # Cache index save function.
+            
     def _save_cache_index(self) -> None:
         with open(self.cache_index_path, 'w') as f:
             json.dump(self.cache_index, f, indent=2)
             
-    # Cache key generation function.
     def _get_cache_key(self, lat: float, lon: float, zoom: int) -> str:
-        """Generate a unique cache key for a specific location and zoom level"""
-        # Round coordinates to 6 decimal places (about 10cm precision)
         return f"{lat:.6f}_{lon:.6f}_{zoom}"
     
-    # Cloud path generation function.
     def _get_cloud_path(self, cache_key: str) -> str:
-        """Convert cache key to cloud storage path"""
-        return f"satellite_images/{cache_key.replace('.', '_')}.jpg"
+        return f"downloaded/{cache_key.replace('.', '_')}.jpg"
     
-    # Local cache check function.
     def _check_local_cache(self, lat: float, lon: float, zoom: int) -> Optional[str]:
-        """Check if an image exists in local cache and return its path if found"""
         cache_key = self._get_cache_key(lat, lon, zoom)
         if cache_key in self.cache_index and self.cache_index[cache_key].get('local_path'):
             local_path = self.cache_index[cache_key]['local_path']
@@ -109,9 +132,7 @@ class SatelliteDownloader:
                 return local_path
         return None
     
-    # Cloud cache check function.
     async def _check_cloud_cache(self, lat: float, lon: float, zoom: int) -> Optional[bytes]:
-        """Check if an image exists in cloud storage and download it if found"""
         if self.testing or not self.cloud_client:
             return None
             
@@ -119,15 +140,12 @@ class SatelliteDownloader:
         cloud_path = self._get_cloud_path(cache_key)
         
         try:
-            # Check if file exists in cloud storage
             cloud_files = self.cloud_client.list_files(prefix=cloud_path)
             if not cloud_files:
                 return None
                 
-            # Download from cloud to local cache
             local_filename = os.path.join(self.local_cache_dir, f"{cache_key.replace('.', '_')}.jpg")
             
-            # Use asyncio to prevent blocking
             def download_file():
                 self.cloud_client.download_file(cloud_path, local_filename)
                 return True
@@ -135,7 +153,6 @@ class SatelliteDownloader:
             success = await asyncio.to_thread(download_file)
             
             if success:
-                # Update cache index
                 if cache_key not in self.cache_index:
                     self.cache_index[cache_key] = {}
                 self.cache_index[cache_key].update({
@@ -146,47 +163,39 @@ class SatelliteDownloader:
                 })
                 self._save_cache_index()
                 
-                # Read the file and return its contents
                 with open(local_filename, 'rb') as f:
                     return f.read()
         except Exception as e:
             print(f"Cloud cache check error: {e}")
         return None
 
-    # Initialise session for API calls to GoogleMaps API.
     async def _init_session(self) -> None:
         if not self.session:
             self.session = aiohttp.ClientSession()
 
-    # Donwload singular image given specified lat/lon co-ordinates.
     async def _download_image_async(self, lat: float, 
-                                    lon: float, 
-                                    area_size: Optional[float] = None,
-                                    zoom: Optional[int] = None) -> Optional[bytes]:
+                                  lon: float, 
+                                  area_size: Optional[float] = None,
+                                  zoom: Optional[int] = None) -> Optional[bytes]:
         
         if area_size:
             zoom = self.get_zoom(area_size)
             
         cache_key = self._get_cache_key(lat, lon, zoom)
             
-        # Check if image is already in local cache
         local_path = self._check_local_cache(lat, lon, zoom)
         if local_path:
-            # Update last accessed time
             if cache_key in self.cache_index:
                 self.cache_index[cache_key]['last_accessed'] = time.time()
                 self._save_cache_index()
             
-            # Image found in local cache, load and return it
             with open(local_path, 'rb') as f:
                 return f.read()
         
-        # Check if image is in cloud storage
         cloud_data = await self._check_cloud_cache(lat, lon, zoom)
         if cloud_data:
             return cloud_data
         
-        # Image not in cache, proceed with API call
         params = {
             'center': f'{lat},{lon}',
             'zoom': zoom,
@@ -201,14 +210,12 @@ class SatelliteDownloader:
                 if response.status == 200:
                     image_data = await response.read()
                     
-                    # Save to local cache
                     local_filename = f"{cache_key.replace('.', '_')}.jpg"
                     local_path = os.path.join(self.local_cache_dir, local_filename)
                     
                     with open(local_path, 'wb') as f:
                         f.write(image_data)
                     
-                    # Update cache index
                     cloud_path = self._get_cloud_path(cache_key)
                     if cache_key not in self.cache_index:
                         self.cache_index[cache_key] = {}
@@ -221,7 +228,6 @@ class SatelliteDownloader:
                     })
                     self._save_cache_index()
                     
-                    # Mark for upload to cloud
                     self.pending_uploads.add(cache_key)
                     
                     return image_data
@@ -229,7 +235,6 @@ class SatelliteDownloader:
             print(f"Download error: {e}")
         return None
 
-    # Process batch of images given specified lat/lon co-ordinates.
     async def _process_batch(self, batch_coords: List[Tuple[int, Tuple[float, float]]], 
                            zoom: int, 
                            grid_dim: int, 
@@ -251,7 +256,6 @@ class SatelliteDownloader:
                 img.save(cache_path, 'JPEG', quality=95)
                 images.append(img)
 
-                # Add cache key to metadata for future reference
                 cache_key = self._get_cache_key(lat, lon, zoom)
                 
                 metadata['images'][filename] = {
@@ -259,18 +263,12 @@ class SatelliteDownloader:
                     'position': {'lat': lat, 'lon': lon},
                     'grid': {'row': idx//grid_dim, 'col': idx%grid_dim},
                     'path': cache_path,
-                    'cache_key': cache_key  # Store cache key in metadata
+                    'cache_key': cache_key
                 }
 
         return images
 
     async def push_to_cloud(self) -> int:
-        """
-        Push pending images to cloud storage
-        
-        Returns:
-            Number of images uploaded
-        """
         if self.testing or not self.cloud_client:
             return 0
             
@@ -283,7 +281,6 @@ class SatelliteDownloader:
                 
                 if os.path.exists(local_path):
                     try:
-                        # Upload to cloud storage using asyncio to prevent blocking
                         def upload_file():
                             self.cloud_client.upload_file(local_path, cloud_path)
                             return True
@@ -291,12 +288,8 @@ class SatelliteDownloader:
                         success = await asyncio.to_thread(upload_file)
                         
                         if success:
-                            # Update cache index
                             self.cache_index[cache_key]['in_cloud'] = True
-                            
-                            # Remove from pending uploads
                             self.pending_uploads.remove(cache_key)
-                            
                             upload_count += 1
                     except Exception as e:
                         print(f"Cloud upload error for {cache_key}: {e}")
@@ -305,33 +298,20 @@ class SatelliteDownloader:
         return upload_count
         
     async def clear_local_cache(self, keep_recent: int = 50) -> int:
-        """
-        Clear local cache, keeping the most recently accessed images
-        
-        Args:
-            keep_recent: Number of recent images to keep
-            
-        Returns:
-            Number of images removed
-        """
-        # First, ensure all pending uploads are pushed to cloud
         await self.push_to_cloud()
         
-        # Sort cache entries by last accessed time
         sorted_entries = sorted(
             [(k, v) for k, v in self.cache_index.items() if v.get('local_path') and os.path.exists(v['local_path'])],
             key=lambda x: x[1].get('last_accessed', 0),
             reverse=True
         )
         
-        # Keep the most recent entries
         to_keep = sorted_entries[:keep_recent]
         to_remove = sorted_entries[keep_recent:]
         
         removed_count = 0
         for cache_key, entry in to_remove:
             if entry.get('local_path') and os.path.exists(entry['local_path']):
-                # Only remove if it's been uploaded to cloud
                 if entry.get('in_cloud', False):
                     os.remove(entry['local_path'])
                     self.cache_index[cache_key]['local_path'] = None
@@ -340,13 +320,13 @@ class SatelliteDownloader:
         self._save_cache_index()
         return removed_count
 
-    # Process location given specified country, city, postcode, grid size and number of images.
     async def process_location(self, 
                              country: str, 
                              city: str, 
                              postcode: Optional[str] = None, 
                              grid_size_km: float = 0.5, 
-                             num_images: int = 16) -> Tuple[Optional[str], List[Image.Image]]:
+                             num_images: int = 16,
+                             output_dir: Optional[str] = None) -> Tuple[Optional[str], List[Image.Image]]:
         try:
             shutil.rmtree(self.cache_dir, ignore_errors=True)
             os.makedirs(self.cache_dir)
@@ -354,8 +334,12 @@ class SatelliteDownloader:
             lat, lon, address = self.get_coordinates(country, city, postcode)
             zoom = self.get_zoom(grid_size_km)
             coordinates, grid_dim = self.calculate_grid(lat, lon, grid_size_km, num_images)
-            folder_name = f'{city.lower().replace(" ", "_")}_{lat:.3f}_{lon:.3f}_{grid_size_km*grid_dim:.1f}km_{grid_size_km*1000:.0f}m'
-            final_dir = os.path.join(self.base_dir, folder_name)
+            
+            if output_dir is None:
+                folder_name = f'{city.lower().replace(" ", "_")}_{lat:.3f}_{lon:.3f}_{grid_size_km*grid_dim:.1f}km_{grid_size_km*1000:.0f}m'
+                final_dir = os.path.join(self.base_dir, folder_name)
+            else:
+                final_dir = output_dir
 
             metadata = {
                 'metadata': {
@@ -381,11 +365,8 @@ class SatelliteDownloader:
             with open(os.path.join(self.cache_dir, 'metadata.json'), 'w') as f:
                 json.dump(metadata, f, indent=2)
                 
-            # After processing, push new images to cloud
             if not self.testing and self.cloud_client:
                 await self.push_to_cloud()
-                
-                # Clear local cache to free up space, keeping recent images
                 await self.clear_local_cache()
 
             return final_dir, all_images
@@ -399,13 +380,11 @@ class SatelliteDownloader:
                 self.session = None
 
     def save_to_final_location(self, final_dir: str) -> None:
-        """Move cached files to their final location and clear cache"""
         if not os.path.exists(final_dir):
             os.makedirs(final_dir)
         for file in os.listdir(self.cache_dir):
             shutil.move(os.path.join(self.cache_dir, file), os.path.join(final_dir, file))
         
-        # Also sync the final directory to cloud storage
         if not self.testing and self.cloud_client:
             try:
                 cloud_prefix = os.path.basename(final_dir)
@@ -417,12 +396,10 @@ class SatelliteDownloader:
         shutil.rmtree(self.cache_dir, ignore_errors=True)
         os.makedirs(self.cache_dir)
         
-    # Convert lat/lon co-ordinates to address.
     def get_location(self, latitude: float, longitude: float) -> str:
         location = self.geolocator.reverse((latitude, longitude))
         return location.address
 
-    # Convert address to lat/lon co-ordinates for API call.
     def get_coordinates(self, country: str, 
                         city: str, 
                         postcode: Optional[str] = None) -> Tuple[float, float, str]:
@@ -433,7 +410,6 @@ class SatelliteDownloader:
             return location.latitude, location.longitude, location.address
         except Exception as e: raise Exception(f"Location lookup failed: {e}")
 
-    # Convert specified grid size to appropriate zoom level for API call.
     def get_zoom(self, grid_size_km: float) -> int:
         grid_m = grid_size_km * 1000
         if grid_m > 3000:
@@ -441,33 +417,37 @@ class SatelliteDownloader:
         grid_specs = {100: 20, 200: 19, 400: 18, 800: 17, 1500: 16, 3000: 15}
         return list(grid_specs.values())[min(range(len(grid_specs)), key=lambda i: abs(grid_m - list(grid_specs.keys())[i]))]
 
-    # Calculate grid size and dimensions for area grid search/download.
     def calculate_grid(self, center_lat: float, center_lon: float, grid_size_km: float, num_images: int) -> Tuple[List[Tuple[float, float]], int]:
         grid_dim = math.ceil(math.sqrt(num_images))
         lat_adj = (grid_size_km * grid_dim / 2) / 111.32
         lon_adj = lat_adj / math.cos(math.radians(center_lat))
-
-        sub_lat = (2 * lat_adj) / grid_dim
-        sub_lon = (2 * lon_adj) / grid_dim
-        start_lat = center_lat + lat_adj - (sub_lat / 2)
-        start_lon = center_lon - lon_adj + (sub_lon / 2)
-
-        return [(start_lat - (i * sub_lat), start_lon + (j * sub_lon))
-                for i in range(grid_dim)
-                for j in range(grid_dim)][:num_images], grid_dim
-
+        
+        start_lat = center_lat + lat_adj
+        start_lon = center_lon - lon_adj
+        
+        lat_step = 2 * lat_adj / grid_dim
+        lon_step = 2 * lon_adj / grid_dim
+        
+        coordinates = []
+        for i in range(grid_dim):
+            for j in range(grid_dim):
+                if len(coordinates) < num_images:
+                    lat = start_lat - (i + 0.5) * lat_step
+                    lon = start_lon + (j + 0.5) * lon_step
+                    coordinates.append((lat, lon))
+        
+        return coordinates, grid_dim
 if __name__ == '__main__':
     downloader = SatelliteDownloader(batch_size=config['training']['batch_size'], testing=True)
-    lat, lon, address = downloader.get_coordinates(country="Italy", city="Burago di Molgora")
+    lat, lon, address = downloader.get_coordinates(country="Germany", city="Augsburg")
     
     async def main():
         await downloader._init_session()
         result = await downloader._download_image_async(lat, lon, area_size=0.5)
         
         if result:
-            # Convert bytes to image, convert to RGB mode, and save
             img = Image.open(BytesIO(result))
-            img = img.convert('RGB')  # Convert from P (palette) mode to RGB
+            img = img.convert('RGB')
             img.save('test_image.jpg')
             print("Image downloaded and saved as 'test_image.jpg'")
         else:
