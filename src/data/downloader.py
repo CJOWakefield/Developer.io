@@ -316,6 +316,57 @@ class SatelliteDownloader:
         os.makedirs(self.cache_dir, exist_ok=True)
 
     # Download helper functions
+
+    # Convert lat/lon co-ordinates to address.
+    def get_location(self, latitude: float, longitude: float) -> str:
+        location = self.geolocator.reverse((latitude, longitude))
+        return location.address
+
+    # Convert address to lat/lon co-ordinates for API call.
+    def get_coordinates(self, country: str, 
+                        city: str, 
+                        postcode: Optional[str] = None) -> Tuple[float, float, str]:
+        
+        query = f"{city}, {country}"
+        if postcode: query = f"{postcode}, {query}"
+        try:
+            location = self.geolocator.geocode(query)
+            if location is None:
+                raise ValueError(f"Location not found: {query}")
+            return location.latitude, location.longitude, location.address
+        except Exception as e:
+            logger.error(f"Location lookup failed: {e}")
+            raise ValueError(f"Location lookup failed: {e}")
+
+    # Convert specified grid size to appropriate zoom level for API call.
+    def get_zoom(self, grid_size_km: float) -> int:
+        grid_m = grid_size_km * 1000
+        if grid_m > 3000:
+            raise ValueError(f'Area size too large. Must be <= 3km. Got {grid_size_km:.1f}km')
+        grid_specs = {100: 20, 200: 19, 400: 18, 800: 17, 1500: 16, 3000: 15}
+        return list(grid_specs.values())[min(range(len(grid_specs)), key=lambda i: abs(grid_m - list(grid_specs.keys())[i]))]
+
+    # Calculate grid size and dimensions for area grid search/download.
+    def calculate_grid(self, center_lat: float, center_lon: float, grid_size_km: float, num_images: int) -> Tuple[List[Tuple[float, float]], int]:
+        grid_dim = math.ceil(math.sqrt(num_images))
+        lat_adj = (grid_size_km * grid_dim / 2) / 111.32
+        lon_adj = lat_adj / math.cos(math.radians(center_lat))
+      
+        start_lat = center_lat + lat_adj
+        start_lon = center_lon - lon_adj
+        
+        lat_step = 2 * lat_adj / grid_dim
+        lon_step = 2 * lon_adj / grid_dim
+        
+        coordinates = []
+        for i in range(grid_dim):
+            for j in range(grid_dim):
+                if len(coordinates) < num_images:
+                    lat = start_lat - (i + 0.5) * lat_step
+                    lon = start_lon + (j + 0.5) * lon_step
+                    coordinates.append((lat, lon))
+        
+        return coordinates, grid_dim
     
     async def _init_session(self) -> None:
         """Initialize aiohttp session for API calls."""
