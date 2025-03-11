@@ -10,24 +10,25 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from torch.optim.lr_scheduler import OneCycleLR
 from torch.nn import functional as F
-from src.data.loader import SatelliteImages
+import sys
 from torch.cuda.amp import autocast, GradScaler
 import multiprocessing
 import yaml
 
 base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-model_directory = os.path.join(base_directory, 'models')
+sys.path.append(base_directory)
+model_directory = os.path.join(base_directory, 'data', 'models')
+
+from src.data.loader import SatelliteImages
+
 with open(os.path.join(base_directory, 'configs', 'default_config.yaml'), 'r') as file:
     config = yaml.safe_load(file)
 
 multiprocessing.set_start_method('spawn', force=True)
 
-transformer = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Resize(config['model']['input_size'], antialias=False),
-    transforms.Normalize(mean=config['data']['augmentations']['normalize']['mean'],
-                         std=config['data']['augmentations']['normalize']['std'])
-])
+transformer = transforms.Compose([transforms.ToTensor(),
+                                  transforms.Resize((256, 256), antialias=False),
+                                  transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
 
 ''' ----- Trainer file summary -----
 
@@ -53,7 +54,7 @@ class ResidualBlock(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, dropout: float):
         super().__init__()
 
-        # Convolutional block
+        # Init convolution
         self.conv = nn.Sequential(
             nn.Conv2d(input_dim, output_dim, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(output_dim),
@@ -63,7 +64,7 @@ class ResidualBlock(nn.Module):
             nn.BatchNorm2d(output_dim),
             nn.LeakyReLU(negative_slope=0.1, inplace=True))
 
-        # Skip connection
+        # Init skip
         self.skip = (nn.Sequential(nn.Conv2d(input_dim, output_dim, kernel_size=1, stride=1, padding=0, bias=False),
                                    nn.BatchNorm2d(output_dim),
                                    nn.LeakyReLU(negative_slope=0.1, inplace=True)) if input_dim != output_dim else nn.Identity())
@@ -150,6 +151,7 @@ class UNet(nn.Module):
         Returns:
             Dictionary containing segmentation output, feature maps, and encoded representation
         """
+        # Ensure input dimensions are correct
         if x.dim() != 4: raise ValueError(f"Expected 4D input (batch, channels, height, width), got {x.dim()}D")
 
         # Encoder path with dimension tracking
@@ -237,7 +239,7 @@ class Train:
     def __init__(self, data: SatelliteImages, model: nn.Module, optimiser: torch.optim.Optimizer, 
                  loss: nn.Module, epochs: int, batch_size: int, model_directory: str = model_directory, 
                  val_data: SatelliteImages = None):
-        self.device = torch.device(config['hardware']['device'] if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = nn.DataParallel(model) if torch.cuda.device_count() > 1 else model
         self.model = self.model.to(self.device)
 
@@ -247,25 +249,31 @@ class Train:
         self.train_loss, self.val_loss = [], []
         self.best_val_loss = float('inf')
         self.model_directory = model_directory
-        self.scaler = GradScaler()
+        
+        # Fix GradScaler usage
+        if torch.cuda.is_available():
+            self.scaler = GradScaler()
+        else:
+            self.scaler = None
+            
         self.checkpoint = {'epoch': 0, 'model_state_dict': self.model.state_dict()}
 
-        # Removed pin_memory and kept minimal DataLoader settings
+        # DataLoader settings
         self.load_train = DataLoader(
             data,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=config['data']['num_workers']
+            num_workers=0
         )
 
         self.load_val = DataLoader(
             val_data,
             batch_size=batch_size,
             shuffle=False,
-            num_workers=config['data']['num_workers']
+            num_workers=0
         ) if val_data else None
 
-        self.scheduler = OneCycleLR(optimiser, max_lr=config['training']['learning_rate'], epochs=epochs,
+        self.scheduler = OneCycleLR(optimiser, max_lr=0.01, epochs=epochs,
                                 steps_per_epoch=len(self.load_train))
 
     def train_epoch(self, e: int) -> float:
@@ -286,14 +294,24 @@ class Train:
             images = images.to(self.device, non_blocking=True)
             masks = masks.to(self.device, non_blocking=True)
 
-            with autocast(device_type='cuda' if torch.cuda.is_available() else 'cpu'):
+            # Fix autocast usage
+            if torch.cuda.is_available():
+                with autocast():
+                    predictions = self.model(images)['segmentation']
+                    loss = self.loss(predictions, masks)
+
+                self.optimiser.zero_grad(set_to_none=True)
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimiser)
+                self.scaler.update()
+            else:
                 predictions = self.model(images)['segmentation']
                 loss = self.loss(predictions, masks)
 
-            self.optimiser.zero_grad(set_to_none=True)
-            self.scaler.scale(loss).backward()
-            self.scaler.step(self.optimiser)
-            self.scaler.update()
+                self.optimiser.zero_grad(set_to_none=True)
+                loss.backward()
+                self.optimiser.step()
+                
             self.scheduler.step()
 
             total_loss += loss.item()
@@ -319,9 +337,15 @@ class Train:
             images = images.to(self.device, non_blocking=True)
             masks = masks.to(self.device, non_blocking=True)
 
-            with autocast(device_type='cuda' if torch.cuda.is_available() else 'cpu'):
+            # Fix autocast usage
+            if torch.cuda.is_available():
+                with autocast():
+                    predictions = self.model(images)['segmentation']
+                    loss = self.loss(predictions, masks)
+            else:
                 predictions = self.model(images)['segmentation']
                 loss = self.loss(predictions, masks)
+                
             total_loss += loss.item()
 
         return total_loss/len(self.load_val)
@@ -333,10 +357,37 @@ class Train:
         Returns:
             Dictionary containing training statistics and model version
         """
-        version = sorted([d for d in os.listdir(model_directory) if d.startswith('v_')])[-1] if os.listdir(model_directory) else 'v_0_01'
+
+        os.makedirs(self.model_directory, exist_ok=True)
+        versions = sorted([d for d in os.listdir(self.model_directory) if d.startswith('v_')])
+        if not versions:version = 'v_0_01'
+        else:
+            latest = versions[-1].split('_')
+            if len(latest) == 3:
+                major, minor = int(latest[1]), int(latest[2])
+                if self.epochs >= 30:
+                    major += 1
+                    minor = 1
+                else:
+                    minor += 1
+                    if minor > 99:
+                        major += 1
+                        minor = 1
+                version = f"v_{major}_{minor:02d}"
+            else: version = 'v_0_01'
+        
         checkpoint_dir = os.path.join(self.model_directory, version)
         os.makedirs(checkpoint_dir, exist_ok=True)
         start_time = time.time()
+        
+        checkpoint = {
+            'epoch': 0,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimiser.state_dict(),
+            'scaler_state_dict': self.scaler.state_dict() if self.scaler else None,
+            'train_loss': 0,
+            'val_loss': None
+        }
 
         try:
             for epoch in range(self.epochs):
@@ -349,7 +400,7 @@ class Train:
                     'epoch': epoch,
                     'model_state_dict': self.model.state_dict(),
                     'optimizer_state_dict': self.optimiser.state_dict(),
-                    'scaler_state_dict': self.scaler.state_dict(),
+                    'scaler_state_dict': self.scaler.state_dict() if self.scaler else None,
                     'train_loss': train_loss,
                     'val_loss': val_loss
                 }
@@ -412,9 +463,7 @@ class FocalLoss(nn.Module):
         else:
             return focal_loss.sum()
 
-""" __________________________________________________________________________________________________________________________ """
-
-def train_model(epochs: int = config['training']['num_epochs']) -> dict:
+def train_model(epochs: int = 5) -> dict:
     """
     Convenience function to train a model with default settings.
     
@@ -426,7 +475,18 @@ def train_model(epochs: int = config['training']['num_epochs']) -> dict:
     """
     model = ModelInit().get_model()
     training_data = SatelliteImages(os.path.join(base_directory, 'data', 'train'), transform=transformer)
-    optimiser = torch.optim.AdamW(model.parameters(), lr=config['training']['learning_rate'], weight_decay=config['training']['optimizer']['weight_decay'])
-    trainer = Train(model=model, data=training_data, optimiser=optimiser, loss=FocalLoss(gamma=2.0), epochs=epochs, batch_size=config['training']['batch_size'])
+    optimiser = torch.optim.AdamW(model.parameters(), lr=0.01, weight_decay=0.01)
+    
+    trainer = Train(
+        model=model, 
+        data=training_data, 
+        optimiser=optimiser, 
+        loss=FocalLoss(gamma=2.0), 
+        epochs=epochs, 
+        batch_size=16
+    )
+    
     return trainer.train()
 
+if __name__ == "__main__":
+    train_model(epochs=5)
