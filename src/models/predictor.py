@@ -30,8 +30,14 @@ with open(os.path.join(base_directory, 'configs', 'default_config.yaml'), 'r') a
 
     >>> Inputs: Model path & data path both hardcoded in file. N_samples and image_ids completely optional and not overly important.
 
-> RegionPredictor - Class allowing for more comprehensive model prediction visualisation. Identifies chunk regions with high percentage of specific land type.
-    >> predict_region - Highlights specific region with high % specific land type with annotation.
+> RegionPredictor - Class for comprehensive land segmentation prediction and analysis.
+    >> tensor_from_file - Converts image file to tensor for prediction
+    >> predict_from_tensor - Generates segmentation mask from tensor
+    >> predict_from_bucket - Predicts from Google Cloud Storage
+    >> predict_region - Processes multiple images and returns predictions
+    >> get_land_proportions - Calculates land type percentages from mask
+    >> identify_locations - Finds suitable areas for specific purposes
+    >> visualise - Displays prediction results with land type proportions
 
 '''
 
