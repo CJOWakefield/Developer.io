@@ -22,9 +22,6 @@ with open(os.path.join(base_directory, 'configs', 'default_config.yaml'), 'r') a
 
 multiprocessing.set_start_method('spawn', force=True)
 
-
-
-# Transformer
 transformer = transforms.Compose([
     transforms.ToTensor(),
     transforms.Resize(config['model']['input_size'], antialias=False),
@@ -32,11 +29,31 @@ transformer = transforms.Compose([
                          std=config['data']['augmentations']['normalize']['std'])
 ])
 
+''' ----- Trainer file summary -----
+
+> ResidualBlock - Basic building block for UNet with skip connections.
+> UNetConfig - Configuration class for UNet model parameters.
+> UNet - U-Net architecture for semantic segmentation of satellite imagery.
+> ModelInit - Helper class for initializing and examining model parameters.
+> Train - Training loop implementation with validation and checkpointing.
+> FocalLoss - Loss function that focuses on hard examples.
+> train_model - Convenience function to train a model with default settings.
+
+'''
+
 class ResidualBlock(nn.Module):
-    def __init__(self, input_dim, output_dim, dropout):
+    """
+    Residual block with two convolutional layers and a skip connection.
+    
+    Args:
+        input_dim: Number of input channels
+        output_dim: Number of output channels
+        dropout: Dropout probability
+    """
+    def __init__(self, input_dim: int, output_dim: int, dropout: float):
         super().__init__()
 
-        # Init convolution
+        # Convolutional block
         self.conv = nn.Sequential(
             nn.Conv2d(input_dim, output_dim, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(output_dim),
@@ -46,16 +63,26 @@ class ResidualBlock(nn.Module):
             nn.BatchNorm2d(output_dim),
             nn.LeakyReLU(negative_slope=0.1, inplace=True))
 
-        # Init skip
+        # Skip connection
         self.skip = (nn.Sequential(nn.Conv2d(input_dim, output_dim, kernel_size=1, stride=1, padding=0, bias=False),
                                    nn.BatchNorm2d(output_dim),
                                    nn.LeakyReLU(negative_slope=0.1, inplace=True)) if input_dim != output_dim else nn.Identity())
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.conv(x) + self.skip(x)
 
 class UNetConfig():
-    def __init__(self, n_classes=7, input_dim=3, output_dim=1, n_features=16, dropout=0.2):
+    """
+    Configuration class for UNet model parameters.
+    
+    Args:
+        n_classes: Number of output classes for segmentation
+        input_dim: Number of input channels
+        output_dim: Number of output channels
+        n_features: Base number of features
+        dropout: Dropout probability
+    """
+    def __init__(self, n_classes: int = 7, input_dim: int = 3, output_dim: int = 1, n_features: int = 16, dropout: float = 0.2):
         self.n_classes = n_classes
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -63,7 +90,13 @@ class UNetConfig():
         self.dropout = dropout
 
 class UNet(nn.Module):
-    def __init__(self, config=None):
+    """
+    U-Net architecture for semantic segmentation of satellite imagery.
+    
+    Args:
+        config: UNetConfig object with model parameters
+    """
+    def __init__(self, config: UNetConfig = None):
         super().__init__()
         self.config = config if config != None else UNetConfig()
         input, dropout = self.config.input_dim, self.config.dropout
@@ -92,7 +125,13 @@ class UNet(nn.Module):
         self.segmentation = nn.Conv2d(64, self.config.n_classes, kernel_size=1)
         self.apply(self.__weights__)
 
-    def __weights__(self, m):
+    def __weights__(self, m: nn.Module) -> None:
+        """
+        Initialize weights for convolutional and batch normalization layers.
+        
+        Args:
+            m: Module to initialize
+        """
         if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
             nn.init.kaiming_normal_(m.weight)
             if m.bias is not None:
@@ -101,8 +140,16 @@ class UNet(nn.Module):
             nn.init.constant_(m.weight, 1)
             nn.init.constant_(m.bias, 0)
 
-    def forward(self, x):
-        # Ensure input dimensions are correct
+    def forward(self, x: torch.Tensor) -> dict:
+        """
+        Forward pass through the U-Net model.
+        
+        Args:
+            x: Input tensor of shape (batch_size, channels, height, width)
+            
+        Returns:
+            Dictionary containing segmentation output, feature maps, and encoded representation
+        """
         if x.dim() != 4: raise ValueError(f"Expected 4D input (batch, channels, height, width), got {x.dim()}D")
 
         # Encoder path with dimension tracking
@@ -119,7 +166,6 @@ class UNet(nn.Module):
 
         # Decoder path with explicit dimension handling
         layer = self.dconv1(c_final)
-        # Ensure dimensions match before concatenation
         if layer.shape != c3.shape: layer = F.interpolate(layer, size=c3.shape[2:])
         layer = torch.cat([layer, c3], dim=1)
         layer = self.dres1(layer)
@@ -141,11 +187,23 @@ class UNet(nn.Module):
                 'encoded': c_final}
 
 class ModelInit:
-    def __init__(self, config=None):
+    """
+    Helper class for initializing and examining model parameters.
+    
+    Args:
+        config: UNetConfig object with model parameters
+    """
+    def __init__(self, config: UNetConfig = None):
         self.config = config if config else UNetConfig()
         self.model = UNet(self.config)
 
-    def model_params(self, input_dim=(1, 3, 256, 256)):
+    def model_params(self, input_dim: tuple = (1, 3, 256, 256)) -> None:
+        """
+        Print model parameters and output shapes.
+        
+        Args:
+            input_dim: Input dimensions (batch_size, channels, height, width)
+        """
         x = torch.randn(*input_dim)
         output = self.model(x)
         print(f'Trainable params: {sum(p.numel() for p in self.model.parameters() if p.requires_grad):,}')
@@ -153,12 +211,32 @@ class ModelInit:
         print(f"Feature shape: {output['features'].shape}")
         print(f"Encoded shape: {output['encoded'].shape}")
 
-    def get_model(self):
+    def get_model(self) -> UNet:
+        """
+        Get the initialized model.
+        
+        Returns:
+            Initialized UNet model
+        """
         return self.model
 
-
 class Train:
-    def __init__(self, data, model, optimiser, loss, epochs, batch_size, model_directory=model_directory, val_data=None):
+    """
+    Training loop implementation with validation and checkpointing.
+    
+    Args:
+        data: Training dataset
+        model: Model to train
+        optimiser: Optimizer for training
+        loss: Loss function
+        epochs: Number of training epochs
+        batch_size: Batch size for training
+        model_directory: Directory to save model checkpoints
+        val_data: Validation dataset (optional)
+    """
+    def __init__(self, data: SatelliteImages, model: nn.Module, optimiser: torch.optim.Optimizer, 
+                 loss: nn.Module, epochs: int, batch_size: int, model_directory: str = model_directory, 
+                 val_data: SatelliteImages = None):
         self.device = torch.device(config['hardware']['device'] if torch.cuda.is_available() else 'cpu')
         self.model = nn.DataParallel(model) if torch.cuda.device_count() > 1 else model
         self.model = self.model.to(self.device)
@@ -190,7 +268,16 @@ class Train:
         self.scheduler = OneCycleLR(optimiser, max_lr=config['training']['learning_rate'], epochs=epochs,
                                 steps_per_epoch=len(self.load_train))
 
-    def train_epoch(self, e):
+    def train_epoch(self, e: int) -> float:
+        """
+        Train the model for one epoch.
+        
+        Args:
+            e: Current epoch number
+            
+        Returns:
+            Average training loss for the epoch
+        """
         self.model.train()
         total_loss = 0
         pbar = tqdm(self.load_train, desc=f'Epoch {e+1}/{self.epochs}')
@@ -215,7 +302,13 @@ class Train:
         return total_loss/len(self.load_train)
 
     @torch.no_grad()
-    def validate(self):
+    def validate(self) -> float:
+        """
+        Validate the model on the validation dataset.
+        
+        Returns:
+            Average validation loss, or None if no validation data
+        """
         if not self.load_val:
             return None
 
@@ -233,7 +326,13 @@ class Train:
 
         return total_loss/len(self.load_val)
 
-    def train(self):
+    def train(self) -> dict:
+        """
+        Train the model for the specified number of epochs.
+        
+        Returns:
+            Dictionary containing training statistics and model version
+        """
         version = sorted([d for d in os.listdir(model_directory) if d.startswith('v_')])[-1] if os.listdir(model_directory) else 'v_0_01'
         checkpoint_dir = os.path.join(self.model_directory, version)
         os.makedirs(checkpoint_dir, exist_ok=True)
@@ -271,12 +370,29 @@ class Train:
                 'training_time': time.time() - start_time, 'version': version}
 
 class FocalLoss(nn.Module):
-    def __init__(self, gamma=2.0, reduction='mean'):
+    """
+    Focal Loss implementation that focuses on hard examples.
+    
+    Args:
+        gamma: Focusing parameter (higher values focus more on hard examples)
+        reduction: Reduction method ('mean', 'sum', or 'none')
+    """
+    def __init__(self, gamma: float = 2.0, reduction: str = 'mean'):
         super(FocalLoss, self).__init__()
         self.gamma = gamma
         self.reduction = reduction
 
-    def forward(self, input, target):
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Calculate focal loss between input and target.
+        
+        Args:
+            input: Predicted logits
+            target: Ground truth labels
+            
+        Returns:
+            Focal loss value
+        """
         if input.dim() > 2:
             input = input.permute(0, 2, 3, 1).contiguous()
             input = input.view(-1, input.size(-1))
@@ -296,9 +412,21 @@ class FocalLoss(nn.Module):
         else:
             return focal_loss.sum()
 
-def train_model(epochs=config['training']['num_epochs']):
+""" __________________________________________________________________________________________________________________________ """
+
+def train_model(epochs: int = config['training']['num_epochs']) -> dict:
+    """
+    Convenience function to train a model with default settings.
+    
+    Args:
+        epochs: Number of training epochs
+        
+    Returns:
+        Dictionary containing training statistics
+    """
     model = ModelInit().get_model()
     training_data = SatelliteImages(os.path.join(base_directory, 'data', 'train'), transform=transformer)
     optimiser = torch.optim.AdamW(model.parameters(), lr=config['training']['learning_rate'], weight_decay=config['training']['optimizer']['weight_decay'])
     trainer = Train(model=model, data=training_data, optimiser=optimiser, loss=FocalLoss(gamma=2.0), epochs=epochs, batch_size=config['training']['batch_size'])
     return trainer.train()
+
