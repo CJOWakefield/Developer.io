@@ -30,7 +30,7 @@ with open(os.path.join(base_directory, 'configs', 'default_config.yaml'), 'r') a
 
 > SatelliteImages - Torch dataset class to load images from specified directory as a batch, for training or augmentation.
     >> __init__ -> Initializes dataset with directory path, transformations, and caching.
-        >>> Inputs: directory (str), transform (callable), num_threads (int), cache_size (int), use_cloud (bool), cloud_prefix (str)
+        >>> Inputs: directory (str), transform (callable), num_threads (int), use_cloud (bool), cloud_prefix (str)
     >> _initialize_from_local -> Initialize dataset from local directory.
         >>> Inputs: None
     >> _initialize_from_cloud -> Initialize dataset from cloud storage.
@@ -45,8 +45,6 @@ with open(os.path.join(base_directory, 'configs', 'default_config.yaml'), 'r') a
         >>> Inputs: mask (np.ndarray)
     >> __len__ -> Returns the number of images contained within the resulting dataset.
         >>> Inputs: None
-    >> prefetch -> Pre-loads specified images into cache using multiple threads.
-        >>> Inputs: indices (list[int])
     >> __del__ -> Clean up temporary directory when done.
         >>> Inputs: None
 
@@ -63,11 +61,10 @@ with open(os.path.join(base_directory, 'configs', 'default_config.yaml'), 'r') a
 class SatelliteImages(Dataset):
     # Initializes dataset with directory path, transformations, and caching.
     def __init__(self, directory: str, transform: callable = None, num_threads: int = 4, 
-                 cache_size: int = 100, use_cloud: bool = False, cloud_prefix: str = None) -> None:
+                 use_cloud: bool = False, cloud_prefix: str = None) -> None:
         self.directory = directory
         self.transform = transform
         self.num_threads = num_threads
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.use_cloud = use_cloud
         self.cloud_prefix = cloud_prefix or os.path.basename(directory)
         
@@ -85,22 +82,17 @@ class SatelliteImages(Dataset):
         else:
             self._initialize_from_local()
         
-        self.rgb_to_class = {
-            0: (0, 255, 255), 
-            1: (255, 255, 0), 
-            2: (255, 0, 255),
-            3: (0, 255, 0), 
-            4: (0, 0, 255), 
-            5: (255, 255, 255), 
-            6: (0, 0, 0)
-            }
-
-        self.cache = {}
-        self.cache_size = cache_size
-        self.cache_lock = threading.Lock()
-        self.executor = ThreadPoolExecutor(max_workers=num_threads)
+        self.class_to_rgb = {
+            0: (0, 255, 255),     # urban - Cyan
+            1: (255, 255, 0),     # agriculture - Yellow
+            2: (255, 0, 255),     # rangeland - Magenta
+            3: (0, 255, 0),       # forest - Green
+            4: (0, 0, 255),       # water - Blue
+            5: (255, 255, 255),   # barren - White
+            6: (0, 0, 0)          # unknown - Black
+        }
+        self.rgb_to_class = {v: k for k, v in self.class_to_rgb.items()}
     
-    # Initialize dataset from local directory
     def _initialize_from_local(self):
         image_files = sorted([f for f in os.listdir(self.directory) if f.endswith('_sat.jpg')])
         
@@ -121,7 +113,6 @@ class SatelliteImages(Dataset):
         
         self.image_id = [img["id"] for img in self.image_data["images"]]
     
-    # Initialize dataset from cloud storage
     def _initialize_from_cloud(self):
         cloud_files = self.cloud_client.list_files(prefix=self.cloud_prefix)
         
@@ -163,7 +154,6 @@ class SatelliteImages(Dataset):
                         if "position" in img_metadata:
                             img["metadata"]["coordinates"] = img_metadata["position"]
 
-    # Load image from path (local or cloud)
     def _load_image(self, path: str) -> np.ndarray:
         if not path.startswith(self.cloud_prefix) and os.path.exists(path):
             img = cv2.imread(path)
@@ -172,29 +162,21 @@ class SatelliteImages(Dataset):
             try:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(path)[1]) as temp_file:
                     temp_path = temp_file.name
-                
                 self.cloud_client.download_file(path, temp_path)
-                
                 img = cv2.imread(temp_path)
-                
                 os.unlink(temp_path)
-                
                 return cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
+            
             except Exception as e:
                 print(f"Error loading image from cloud: {e}")
                 return None
         return None
     
-    # Returns json style dictionary of image data for a given image ID
     def __getdata__(self, image_id: int) -> dict:
         return next((img for img in self.image_data["images"] if img["id"] == image_id), None)
 
-    # Returns a tuple of (image, mask, image_id) for the given image ID
-    def __getitem__(self, image_id: int) -> tuple[torch.Tensor, torch.Tensor, int]:
-        with self.cache_lock:
-            if image_id in self.cache:
-                return self.cache[image_id]
-
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, int]:
+        image_id = self.image_id[idx]
         image_info = next((img for img in self.image_data["images"] if img["id"] == image_id), None)
         if image_info is None:
             raise KeyError(f"Image ID {image_id} not found in dataset")
@@ -204,58 +186,59 @@ class SatelliteImages(Dataset):
 
         if self.transform:
             sat = self.transform(sat)
-            mask_tensor = self._process_mask(mask)
         else:
-            mask_tensor = torch.from_numpy(mask).to(self.device)
+            sat = torch.from_numpy(sat) if isinstance(sat, np.ndarray) else sat
 
-        result = (torch.from_numpy(sat).to(self.device) if isinstance(sat, np.ndarray) else sat,
-                 mask_tensor, image_id)
-
-        with self.cache_lock:
-            if len(self.cache) >= self.cache_size:
-                self.cache.pop(next(iter(self.cache)))
-            self.cache[image_id] = result
-
-        return result
+        mask_tensor = self._process_mask(mask)
+        
+        return sat, mask_tensor, image_id
     
     # Converts RGB mask to class indices tensor and resizes to model input size
     def _process_mask(self, mask: np.ndarray) -> torch.Tensor:
-        mask_tensor = torch.zeros((mask.shape[0], mask.shape[1]), dtype=torch.long, device=self.device)
-        mask_torch = torch.from_numpy(mask).to(self.device)
+        """
+        Converts RGB mask to class indices tensor and resizes to model input size.
+        
+        Args:
+            mask: RGB mask as numpy array
+            
+        Returns:
+            Tensor with class indices
+        """
+        mask_tensor = torch.zeros((mask.shape[0], mask.shape[1]), dtype=torch.long)
+        mask_torch = torch.from_numpy(mask)
 
         for rgb, class_idx in self.rgb_to_class.items():
-            mask_tensor[torch.all(mask_torch == torch.tensor(rgb, device=self.device).view(1, 1, 3), dim=2)] = class_idx
+            rgb_tensor = torch.tensor(rgb)
+            mask_match = torch.all(mask_torch == rgb_tensor.view(1, 1, 3), dim=2)
+            mask_tensor[mask_match] = class_idx
 
-        return F.interpolate(mask_tensor.unsqueeze(0).unsqueeze(0).float(),
-                           size=config['model']['input_size'], mode='nearest').squeeze().long()
+        mask_tensor = F.interpolate(
+            mask_tensor.unsqueeze(0).unsqueeze(0).float(),
+            size=config['model']['input_size'], 
+            mode='nearest'
+        ).squeeze().long()
+        
+        return mask_tensor
 
-    # Returns the total number of images in the dataset
     def __len__(self) -> int:
         return len(self.image_data["images"])
-
-    # Pre-loads specified images into cache using multiple threads
-    def prefetch(self, indices: list[int] = None) -> list[tuple[torch.Tensor, torch.Tensor, int]]:
-        if indices is None:
-            indices = range(len(self))
-        futures = [self.executor.submit(self.__getitem__, i) for i in indices]
-        return [f.result() for f in futures]
     
-    # Clean up temporary directory when done
     def __del__(self):
         if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
-            import shutil
-            shutil.rmtree(self.temp_dir)
+            try:
+                import shutil
+                shutil.rmtree(self.temp_dir)
+            except ImportError: pass
 
 
 class ImagePreview:
-    # Initialize with directory path
     def __init__(self, directory: str = None):
         self.directory = directory or os.path.join(base_directory, 'data', 'train')
         self.dataset = SatelliteImages(self.directory)
     
-    # Preview a satellite image and its mask
     def preview(self, image_id: int, figsize: tuple = (10, 5)):
-        image, mask, _ = self.dataset.__getitem__(image_id)
+        idx = self.dataset.image_id.index(image_id)
+        image, mask, _ = self.dataset[idx]
         
         if isinstance(image, torch.Tensor):
             image = image.permute(1, 2, 0).cpu().numpy()
@@ -278,13 +261,14 @@ class ImagePreview:
 
 if __name__ == '__main__':
     base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    
     print("Loading local dataset...")
+    
     images = SatelliteImages(os.path.join(base_directory, 'data', 'train'))
     print(f"Local dataset contains {len(images)} images")
+
     print(images.__getdata__(855))
-    
     print("\nLoading cloud dataset...")
+
     cloud_images = SatelliteImages(
         directory=os.path.join(base_directory, 'data', 'train'),
         use_cloud=True,
@@ -294,6 +278,7 @@ if __name__ == '__main__':
     
     if len(cloud_images) > 0:
         first_id = cloud_images.image_id[0]
+        idx = cloud_images.image_id.index(first_id)
         print(f"Getting image with ID {first_id} from cloud...")
-        image, mask, _ = cloud_images.__getitem__(first_id)
+        image, mask, _ = cloud_images[idx]
         print(f"Successfully loaded image with shape {image.shape} and mask with shape {mask.shape}")
