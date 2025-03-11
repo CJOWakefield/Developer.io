@@ -3,7 +3,6 @@ import re
 import cv2
 import torch
 import numpy as np
-import asyncio
 import matplotlib.pyplot as plt
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
@@ -75,6 +74,20 @@ class RegionPredictor:
         self.model = UNet().to(self.device)
         self.model.load_state_dict(torch.load(os.path.join(self.base_dir, 'data', 'models', self.model_version, 'model.pt'), weights_only=True)['model_state_dict'])
         self.model.eval()
+
+    def tensor_from_file(self, image_path: str) -> torch.Tensor:
+        """
+        Convert an image file to a PyTorch tensor.
+        
+        Args:
+            image_path: Path to the image file
+            
+        Returns:
+            PyTorch tensor
+        """
+        image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+        image_tensor = transformer(image).unsqueeze(0).to(self.device)
+        return image_tensor
         
     @torch.no_grad()
     def predict_from_tensor(self, image_tensor):
@@ -101,43 +114,6 @@ class RegionPredictor:
             'raw_mask': predicted_classes,
             'colored_mask': pred_rgb
         }
-
-    @torch.no_grad()
-    def predict_from_file(self, file_path: str) -> np.ndarray:
-        """
-        Predict segmentation mask from an image file.
-        
-        Args:
-            file_path: Path to the image file
-            
-        Returns:
-            Segmentation mask as numpy array
-        """
-        try:
-            image = cv2.imread(file_path)
-            if image is None: raise ValueError(f"Failed to load image from {file_path}")
-            
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            original_height, original_width = image.shape[:2]
-            if hasattr(self, 'input_size'): resized_image = cv2.resize(image, self.input_size)
-            else: resized_image = image
-            
-            image_tensor = torch.from_numpy(resized_image.transpose(2, 0, 1)).float() / 255.0
-            image_tensor = image_tensor.unsqueeze(0).to(self.device)
-            result = self.predict_from_tensor(image_tensor)
-        
-            if hasattr(self, 'input_size') and (original_height, original_width) != result['colored_mask'].shape[:2]:
-                result['colored_mask'] = cv2.resize(result['colored_mask'], (original_width, original_height), interpolation=cv2.INTER_NEAREST)
-                raw_mask_resized = cv2.resize(result['raw_mask'].astype(float), (original_width, original_height), interpolation=cv2.INTER_NEAREST)
-                result['raw_mask'] = raw_mask_resized.astype(result['raw_mask'].dtype)
-            return result
-            
-        except Exception as e:
-            return {
-                'raw_mask': np.zeros((512, 512), dtype=np.uint8),
-                'colored_mask': np.zeros((512, 512, 3), dtype=np.uint8),
-                'unique_classes': []
-            }
 
     @torch.no_grad()
     def predict_from_bucket(self, bucket_name: str, blob_path: str) -> np.ndarray:
@@ -198,6 +174,22 @@ class RegionPredictor:
         
         if save_dir: await self.save_predictions(predictions, save_dir)
         return predictions
+
+    async def save_predictions(self, predictions: Dict, save_dir: str):
+        os.makedirs(save_dir, exist_ok=True)
+        
+        def save_prediction(pred_data):
+            img_id, data = pred_data
+            with self.thread_lock:
+                if 'path' not in data:
+                    orig_path = os.path.join(save_dir, f'{img_id}_sat.jpg')
+                    cv2.imwrite(orig_path, cv2.cvtColor(data['original'], cv2.COLOR_RGB2BGR))
+                
+                mask_path = os.path.join(save_dir, f'{img_id}_mask.png')
+                Image.fromarray(data['mask'].astype(np.uint8)).save(mask_path, format='PNG')
+        
+        with ThreadPoolExecutor(max_workers=config['data']['num_workers']) as executor:
+            list(executor.map(save_prediction, predictions.items()))
 
     def get_land_proportions(self, mask: np.ndarray) -> Dict[str, float]:
             """
@@ -275,21 +267,60 @@ class RegionPredictor:
                     'developed': 0
                 }
     
-    async def save_predictions(self, predictions: Dict, save_dir: str):
-        os.makedirs(save_dir, exist_ok=True)
+    def identify_locations(self, mask: np.ndarray, purpose: str, min_area_sqm: float = 1000) -> List[Dict]:
+        """
+        Identify suitable locations for a specific purpose.
         
-        def save_prediction(pred_data):
-            img_id, data = pred_data
-            with self.thread_lock:
-                if 'path' not in data:
-                    orig_path = os.path.join(save_dir, f'{img_id}_sat.jpg')
-                    cv2.imwrite(orig_path, cv2.cvtColor(data['original'], cv2.COLOR_RGB2BGR))
+        Args:
+            mask: Segmentation mask
+            purpose: Purpose (e.g., 'wind_turbines', 'solar_panels')
+            min_area_sqm: Minimum area in square meters
+            
+        Returns:
+            List of suitable locations with coordinates and areas
+        """
+        suitable_locations = []
+        
+        purpose_land_map = {
+            'wind_turbines': ['rangeland', 'barren'],
+            'solar_panels': ['barren', 'rangeland', 'agricultural'],
+            'agriculture': ['agricultural', 'rangeland'],
+            'urban_development': ['barren', 'rangeland'],
+            'conservation': ['forest', 'water', 'rangeland']
+        }
+        
+        if purpose not in purpose_land_map:
+            raise ValueError(f"Unsupported purpose: {purpose}. Supported purposes: {list(purpose_land_map.keys())}")
+        
+        suitable_land_types = purpose_land_map[purpose]
+        binary_mask = np.zeros((mask.shape[0], mask.shape[1]), dtype=np.uint8)
+        
+        for land_type in suitable_land_types:
+            if land_type in self.classes:
+                color = self.classes[land_type]
+                binary_mask |= np.all(mask == color, axis=-1)
+        
+        contours, _ = cv2.findContours(binary_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        pixel_to_sqm = (500 * 500) / (mask.shape[0] * mask.shape[1])
+        for i, contour in enumerate(contours):
+            area_pixels = cv2.contourArea(contour)
+            area_sqm = area_pixels * pixel_to_sqm
+            if area_sqm >= min_area_sqm:
+                M = cv2.moments(contour)
+                if M["m00"] != 0:
+                    cx = int(M["m10"] / M["m00"])
+                    cy = int(M["m01"] / M["m00"])
+                else:
+                    cx, cy = 0, 0
                 
-                mask_path = os.path.join(save_dir, f'{img_id}_mask.png')
-                Image.fromarray(data['mask'].astype(np.uint8)).save(mask_path, format='PNG')
+                suitable_locations.append({
+                    'id': i,
+                    'area_sqm': area_sqm,
+                    'centroid': (cx, cy),
+                    'contour': contour.tolist()
+                })
         
-        with ThreadPoolExecutor(max_workers=config['data']['num_workers']) as executor:
-            list(executor.map(save_prediction, predictions.items()))
+        return suitable_locations
 
     def _add_to_cache(self, key: tuple, image: np.ndarray, prediction: np.ndarray):
         if len(self.image_cache) >= self.cache_size:
@@ -315,88 +346,6 @@ class RegionPredictor:
         pred_path = os.path.join(cache_dir, f"{base_filename}_mask.png")
         Image.fromarray(prediction.astype(np.uint8)).save(pred_path, format='PNG')
 
-    def predict_mask(self, image_path: str) -> np.ndarray:
-        """
-        Generate segmentation mask for the specified image.
-        
-        Args:
-            image_path: Path to the image file
-            
-        Returns:
-            Segmentation mask as numpy array
-        """
-        try:
-            result = self.predict_from_file(image_path)
-            self.raw_mask = result['raw_mask']
-            return result['colored_mask']
-        except Exception as e:
-            return np.zeros((512, 512, 3), dtype=np.uint8)
-    
-    def identify_suitable_locations(self, mask: np.ndarray, purpose: str, min_area_sqm: float = 1000) -> List[Dict]:
-        """
-        Identify suitable locations for a specific purpose.
-        
-        Args:
-            mask: Segmentation mask
-            purpose: Purpose (e.g., 'wind_turbines', 'solar_panels')
-            min_area_sqm: Minimum area in square meters
-            
-        Returns:
-            List of suitable locations with coordinates and areas
-        """
-        suitable_locations = []
-        
-        # Map purposes to land types
-        purpose_land_map = {
-            'wind_turbines': ['rangeland', 'barren'],
-            'solar_panels': ['barren', 'rangeland', 'agricultural'],
-            'agriculture': ['agricultural', 'rangeland'],
-            'urban_development': ['barren', 'rangeland'],
-            'conservation': ['forest', 'water', 'rangeland']
-        }
-        
-        if purpose not in purpose_land_map:
-            raise ValueError(f"Unsupported purpose: {purpose}. Supported purposes: {list(purpose_land_map.keys())}")
-        
-        suitable_land_types = purpose_land_map[purpose]
-        
-        # Create a binary mask for suitable land types
-        binary_mask = np.zeros((mask.shape[0], mask.shape[1]), dtype=np.uint8)
-        
-        for land_type in suitable_land_types:
-            if land_type in self.classes:
-                color = self.classes[land_type]
-                binary_mask |= np.all(mask == color, axis=-1)
-        
-        # Find contours in the binary mask
-        contours, _ = cv2.findContours(binary_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # Calculate pixel to square meter conversion (approximate)
-        # Assuming a standard satellite image covers about 0.5km x 0.5km
-        pixel_to_sqm = (500 * 500) / (mask.shape[0] * mask.shape[1])
-        
-        for i, contour in enumerate(contours):
-            area_pixels = cv2.contourArea(contour)
-            area_sqm = area_pixels * pixel_to_sqm
-            
-            if area_sqm >= min_area_sqm:
-                # Get centroid of the contour
-                M = cv2.moments(contour)
-                if M["m00"] != 0:
-                    cx = int(M["m10"] / M["m00"])
-                    cy = int(M["m01"] / M["m00"])
-                else:
-                    cx, cy = 0, 0
-                
-                suitable_locations.append({
-                    'id': i,
-                    'area_sqm': area_sqm,
-                    'centroid': (cx, cy),
-                    'contour': contour.tolist()
-                })
-        
-        return suitable_locations
-    
     def visualise(self, image_path: str) -> tuple:
         """
         Visualize prediction results with land type proportions.
@@ -407,15 +356,13 @@ class RegionPredictor:
         Returns:
             Tuple containing (figure, prediction_result, proportions)
         """
-        image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
-        image_tensor = transformer(image).unsqueeze(0).to(self.device)
-        
+        image_tensor = self.tensor_from_file(image_path)
         prediction_result = self.predict_from_tensor(image_tensor)
         proportions = self.get_land_proportions(prediction_result)
         
         fig, axes = plt.subplots(1, 3, figsize=(18, 6))
         
-        axes[0].imshow(image)
+        axes[0].imshow(image_tensor.cpu().numpy())
         axes[0].set_title('Original Image')
         axes[0].axis('off')
         
@@ -507,76 +454,6 @@ def visualise_pred(model_path=model_directory, data_path=train_directory, model_
     plt.tight_layout()
     plt.show()
     return results
-
-def visualize_prediction_results(result_dict, original_image_path=None):
-    """
-    Visualize prediction results from predict_from_file output.
-    
-    Args:
-        result_dict: Dictionary containing 'raw_mask' and 'colored_mask'
-        original_image_path: Optional path to the original image
-    """
-    import matplotlib.pyplot as plt
-    import cv2
-    import numpy as np
-    
-    # Create figure with subplots
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    
-    # Plot original image if provided
-    if original_image_path:
-        original = cv2.imread(original_image_path)
-        original = cv2.cvtColor(original, cv2.COLOR_BGR2RGB)
-        axes[0].imshow(original)
-        axes[0].set_title('Original Image')
-        axes[0].axis('off')
-    
-    # Plot colored mask
-    axes[1].imshow(result_dict['colored_mask'])
-    axes[1].set_title('Segmentation Mask')
-    axes[1].axis('off')
-    
-    # Plot raw mask with colormap
-    raw_mask_display = result_dict['raw_mask'].copy()
-    axes[2].imshow(raw_mask_display, cmap='nipy_spectral')
-    axes[2].set_title('Raw Class Indices')
-    axes[2].axis('off')
-    
-    # Add colorbar for the raw mask
-    cbar = plt.colorbar(axes[2].imshow(raw_mask_display, cmap='nipy_spectral'), 
-                        ax=axes[2], orientation='vertical', fraction=0.046, pad=0.04)
-    cbar.set_label('Class Index')
-    
-    # Add legend for the colored mask
-    class_names = {
-        0: 'Urban (Cyan)',
-        1: 'Agriculture (Yellow)',
-        2: 'Rangeland (Magenta)',
-        3: 'Forest (Green)',
-        4: 'Water (Blue)',
-        5: 'Barren (White)',
-        6: 'Unknown (Black)'
-    }
-    
-    legend_elements = []
-    for class_idx, name in class_names.items():
-        color = result_dict['colored_mask'][0, 0].copy()
-        if class_idx == 0: color = np.array([0, 255, 255])
-        if class_idx == 1: color = np.array([255, 255, 0])
-        if class_idx == 2: color = np.array([255, 0, 255])
-        if class_idx == 3: color = np.array([0, 255, 0])
-        if class_idx == 4: color = np.array([0, 0, 255])
-        if class_idx == 5: color = np.array([255, 255, 255])
-        if class_idx == 6: color = np.array([0, 0, 0])
-        
-        legend_elements.append(plt.Rectangle((0, 0), 1, 1, color=color/255.0, label=name))
-    
-    fig.legend(handles=legend_elements, loc='lower center', ncol=4, bbox_to_anchor=(0.5, -0.05))
-    
-    plt.tight_layout()
-    plt.show()
-    
-    return fig
 
 if __name__ == '__main__':
     # predictor = RegionPredictor()
