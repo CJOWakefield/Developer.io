@@ -6,6 +6,7 @@ import numpy as np
 import os
 from typing import Dict, List, Optional, Any, Union
 import cv2
+import io
 
 # Configure logging
 logging.basicConfig(
@@ -13,13 +14,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger('satellite_api')
-
-## Required api calls for frontend:
-# - 1. Process location. Given a country, city (and postcode), retrieve the coordinates and a list of suggested locations.
-# - 2. Given co-ordinates, call to the GoogleMaps API to download image data and cache locally. 
-# - 3. Using cached images, use model to predict segmentation mask and return overlayed image.
-# - 4. Calculate relevant proportions of certain land types.
-# - 5. Identify suitable locations for a given purpose, e.g. wind turbines by calculating the available area 
 
 class SatelliteAPI:
     """
@@ -48,6 +42,9 @@ class SatelliteAPI:
         self.mask = None
         self.proportions = None
         logger.info(f"SatelliteAPI initialized in {mode} mode")
+        
+        # Create cache dir if it doesn't exist
+        os.makedirs(self.downloader.cache_dir, exist_ok=True)
 
     async def process_location(self, country: str, city: str, postcode: str = None) -> Dict[str, Any]:
         """
@@ -86,13 +83,23 @@ class SatelliteAPI:
                 if not self.image_bytes:
                     return {'status': 'error', 'message': 'Failed to download images'}
                 
+                # Ensure all image bytes are saved to files
                 self.image_paths = []
-                for file in os.listdir(self.downloader.cache_dir):
-                    if file.endswith('.jpg') and not file.startswith('metadata'):
-                        path = os.path.join(self.downloader.cache_dir, file)
-                        self.image_paths.append(path)
+                for i, img_bytes in enumerate(self.image_bytes):
+                    # Create a filename
+                    filename = f"satellite_{lat}_{lon}_grid_{i}.jpg"
+                    file_path = os.path.join(self.downloader.cache_dir, filename)
+                    
+                    # Save the image bytes
+                    try:
+                        with open(file_path, 'wb') as f:
+                            f.write(img_bytes)
+                        self.image_paths.append(file_path)
+                        logger.info(f"Saved image to {file_path}")
+                    except Exception as e:
+                        logger.error(f"Error saving image: {e}")
                 
-                logger.info(f"Downloaded {len(self.image_bytes)} images, found {len(self.image_paths)} in cache")
+                logger.info(f"Downloaded {len(self.image_bytes)} images, saved {len(self.image_paths)} files")
                 
             else:
                 # Single image mode
@@ -101,23 +108,26 @@ class SatelliteAPI:
                 
                 if image_data:
                     self.image_bytes = [image_data]
-                    self.image_paths = []
-                    for file in os.listdir(self.downloader.cache_dir):
-                        if file.endswith('.jpg') and not file.startswith('metadata'):
-                            path = os.path.join(self.downloader.cache_dir, file)
-                            self.image_paths.append(path)
-                            
-                    if self.image_paths:
-                        logger.info(f"Downloaded image and found in cache at {self.image_paths[0]}")
-                    else:
-                        return {'status': 'error', 'message': 'Image downloaded but not found in cache'}
+                    
+                    # Save the image directly
+                    filename = f"satellite_{lat}_{lon}.jpg"
+                    file_path = os.path.join(self.downloader.cache_dir, filename)
+                    
+                    try:
+                        with open(file_path, 'wb') as f:
+                            f.write(image_data)
+                        self.image_paths = [file_path]
+                        logger.info(f"Saved image to {file_path}")
+                    except Exception as e:
+                        logger.error(f"Error saving image: {e}")
+                        return {'status': 'error', 'message': f'Error saving image: {str(e)}'}
                 else:
                     return {'status': 'error', 'message': 'Failed to download image'}
             
             if self.image_paths: 
                 return {'status': 'success', 'image_paths': self.image_paths}
             else: 
-                return {'status': 'error', 'message': 'No images found in cache'}
+                return {'status': 'error', 'message': 'No images saved to cache'}
         except Exception as e:
             logger.error(f"Error in get_satellite_image: {str(e)}")
             return {'status': 'error', 'message': str(e)}
@@ -138,6 +148,50 @@ class SatelliteAPI:
         """
         try:
             logger.info(f"Generating segmentation mask for {image_path}")
+            
+            # Check if image exists
+            if not os.path.exists(image_path):
+                logger.error(f"Image file not found: {image_path}")
+                return {'status': 'error', 'message': 'Image file not found'}
+            
+            # Check if file is empty
+            if os.path.getsize(image_path) == 0:
+                logger.error(f"Image file is empty: {image_path}")
+                
+                # Try to use image_bytes if available
+                if hasattr(self, 'image_bytes') and self.image_bytes:
+                    # Find the corresponding image bytes
+                    index = -1
+                    for i, path in enumerate(self.image_paths):
+                        if os.path.normpath(path) == os.path.normpath(image_path):
+                            index = i
+                            break
+                    
+                    if index >= 0 and index < len(self.image_bytes):
+                        # Write the bytes to the file
+                        with open(image_path, 'wb') as f:
+                            f.write(self.image_bytes[index])
+                        logger.info(f"Restored image from bytes: {image_path}")
+                    else:
+                        return {'status': 'error', 'message': 'Image file is empty and no bytes available'}
+            
+            # Read image directly to verify it's valid
+            try:
+                img = cv2.imread(image_path)
+                if img is None:
+                    logger.error(f"Failed to read image with OpenCV: {image_path}")
+                    # Try another approach - read the file and decode with OpenCV
+                    with open(image_path, 'rb') as f:
+                        img_bytes = f.read()
+                        img = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
+                    
+                    if img is None:
+                        return {'status': 'error', 'message': 'Image file is corrupted or invalid format'}
+            except Exception as e:
+                logger.error(f"Error reading image: {e}")
+                return {'status': 'error', 'message': f'Error reading image: {str(e)}'}
+            
+            # Use predictor to generate mask
             image_tensor = self.predictor.tensor_from_file(image_path)
             prediction_result = self.predictor.predict_from_tensor(image_tensor)
             

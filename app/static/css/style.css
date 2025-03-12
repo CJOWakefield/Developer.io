@@ -1,117 +1,161 @@
-.container {
-    display: flex;
-    height: 100vh;
+/* Main styles */
+body {
+    background-color: #f8f9fa;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
-.sidebar {
-    width: 300px;
-    padding: 20px;
-    background-color: #f5f5f5;
-    overflow-y: auto;
-}
-#map {
-    flex-grow: 1;
-    height: 100%;
-}
-.search-container {
-    position: relative;
+
+.card {
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     margin-bottom: 20px;
-}
-#locationSearch {
-    width: 100%;
-    padding: 8px;
-    margin-bottom: 5px;
-}
-.suggestions {
-    position: absolute;
-    width: 100%;
-    background: white;
-    border: 1px solid #ddd;
-    max-height: 200px;
-    overflow-y: auto;
-    display: none;
-}
-.suggestion-item {
-    padding: 8px;
-    cursor: pointer;
-}
-.suggestion-item:hover {
-    background-color: #f0f0f0;
-}
-.hidden {
-    display: none;
-}
-button {
-    padding: 8px 16px;
-    background-color: #4CAF50;
-    color: white;
+    border-radius: 8px;
     border: none;
-    cursor: pointer;
-    width: 100%;
 }
-button:disabled {
-    background-color: #cccccc;
-    cursor: not-allowed;
+
+.card-header {
+    background-color: #ffffff;
+    border-bottom: 1px solid #f0f0f0;
+    padding: 15px 20px;
+    border-top-left-radius: 8px !important;
+    border-top-right-radius: 8px !important;
 }
-#results {
-    margin-top: 20px;
-    padding: 10px;
-    background-color: white;
-    border-radius: 4px;
+
+.card-body {
+    padding: 20px;
 }
-#uploadStatus {
-    margin-top: 20px;
-}
-.prediction-container {
-    margin-top: 20px;
-}
-.image-grid {
+
+/* Satellite image grid */
+.satellite-grid {
     display: grid;
-    gap: 20px;
-    margin-bottom: 20px;
-}
-.image-pair {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, 1fr);
     gap: 10px;
-    background: white;
-    padding: 10px;
-    border-radius: 4px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-top: 10px;
 }
-.original-image,
-.prediction-image {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+
+.satellite-grid-item {
+    border: 2px solid transparent;
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.2s ease;
 }
-.original-image h3,
-.prediction-image h3 {
-    margin: 0 0 10px 0;
-    font-size: 14px;
-    color: #666;
+
+.satellite-grid-item:hover {
+    transform: scale(1.02);
 }
-.original-image img,
-.prediction-image img {
-    max-width: 100%;
+
+.satellite-grid-item.selected {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.25);
+}
+
+.satellite-grid-item img {
+    width: 100%;
     height: auto;
-    border-radius: 4px;
+    object-fit: cover;
 }
-.metrics {
-    background: white;
-    padding: 15px;
-    border-radius: 4px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+
+/* Image containers */
+#satellite-image-container, #mask-image-container {
+    min-height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
 }
-.metrics h3 {
-    margin: 0 0 10px 0;
-    color: #333;
+
+#satellite-image-container img, #mask-image-container img {
+    max-width: 100%;
+    border-radius: 8px;
+    max-height: 300px;
+    object-fit: contain;
+    border: 1px solid #e0e0e0;
+    display: block;
+    margin: 0 auto;
 }
-.metrics ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
+
+/* Add specific styles for satellite image visualization */
+.satellite-image {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease;
 }
-.metrics li {
-    margin-bottom: 5px;
-    color: #666;
-} 
+
+.satellite-image:hover {
+    transform: scale(1.02);
+}
+
+/* Add specific styles for mask image visualization */
+.mask-image {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* Improve grid image display */
+.satellite-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+    margin-top: 10px;
+    margin-bottom: 15px;
+}
+
+/* Loading animation */
+.loading {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(0, 0, 0, 0.1);
+    border-top-color: #0d6efd;
+    border-radius: 50%;
+    animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Chart container */
+#proportions-chart {
+    max-height: 300px;
+}
+
+/* Form controls */
+.form-control:focus, .form-select:focus {
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+    border-color: #86b7fe;
+}
+
+.btn-primary {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+
+.btn-primary:hover {
+    background-color: #0b5ed7;
+    border-color: #0a58ca;
+}
+
+.btn-success {
+    background-color: #198754;
+    border-color: #198754;
+}
+
+.btn-success:hover {
+    background-color: #157347;
+    border-color: #146c43;
+}
+
+/* Form check (radio buttons) */
+.form-check-input:checked {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .row {
+        flex-direction: column;
+    }
+    
+    .satellite-grid {
+        grid-template-columns: 1fr;
+    }
+}
