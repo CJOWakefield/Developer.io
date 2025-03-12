@@ -278,7 +278,7 @@ class TestSatelliteDownloader(unittest.TestCase):
                 'local_path': local_path,
                 'cloud_path': self.downloader._get_cloud_path(lat, lon, 18),
                 'last_accessed': time.time() - (i * 100),
-                'in_cloud': True  # Mark all as in cloud so they can be removed
+                'in_cloud': True
             }
             
             if i >= 7:
@@ -323,7 +323,6 @@ class TestSatelliteDownloader(unittest.TestCase):
         self.assertEqual(result, local_path)
         logger.info(f"✓ _check_local_cache: Successfully retrieved local cache path")
         
-        # Test _check_cloud_cache (will be skipped in testing mode)
         cloud_result = await self.downloader._check_cloud_cache(lat, lon, zoom)
         logger.info(f"✓ _check_cloud_cache: {'Retrieved from cloud' if cloud_result else 'Skipped in testing mode'}")
     
