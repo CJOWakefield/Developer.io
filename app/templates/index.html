@@ -4,10 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DeveloperIO - Satellite Imagery Analysis</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css">
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
 </head>
@@ -39,23 +40,24 @@
 
     <!-- Hero Section with Map -->
     <section id="hero-section">
-        <div class="overlay"></div>
         <div id="map-container"></div>
-        <div class="container search-container">
-            <div class="row justify-content-center">
-                <div class="col-md-8 col-lg-6">
-                    <div class="search-card">
-                        <h1>Satellite Imagery Analysis</h1>
-                        <p class="lead">Search locations or click on the map to analyze satellite imagery</p>
-                        <div class="input-group mb-3">
-                            <span class="input-group-text"><i class="fas fa-search"></i></span>
-                            <input type="text" id="location-search" class="form-control" 
-                                placeholder="Enter location (Country, City, Postcode)" aria-label="Location search">
-                            <button class="btn btn-primary" type="button" id="search-button">Search</button>
-                        </div>
-                        <div id="location-suggestions" class="list-group suggestions-dropdown"></div>
-                    </div>
+        
+        <!-- Floating Search Container -->
+        <div class="floating-search-container">
+            <div class="search-card">
+                <h2>Find Satellite Imagery</h2>
+                <p class="lead">Search by location or click directly on the map</p>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="fas fa-search"></i></span>
+                    <input type="text" id="location-search" class="form-control" 
+                        placeholder="Enter location (Country, City, Postcode)" aria-label="Location search">
+                    <button class="btn btn-primary" type="button" id="search-button">Search</button>
                 </div>
+                <div id="location-suggestions" class="list-group suggestions-dropdown"></div>
+            </div>
+            
+            <div class="map-instructions">
+                <i class="fas fa-map-marker-alt"></i> Click anywhere on the map to select a location
             </div>
         </div>
     </section>
@@ -177,7 +179,7 @@
     </section>
 
     <!-- Loading Modal -->
-    <div class="modal fade" id="loadingModal" tabindex="-1" aria-labelledby="loadingModalLabel" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal fade" id="loadingModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
                 <div class="modal-body text-center p-5">
