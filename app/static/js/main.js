@@ -52,7 +52,26 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     function hideLoading() {
-        state.loadingModal.hide();
+        // Add a small delay to ensure the modal has time to initialize before hiding
+        setTimeout(() => {
+            if (state.loadingModal) {
+                state.loadingModal.hide();
+                
+                // Additional check to force-remove modal if it's still visible
+                const modalElement = document.getElementById('loadingModal');
+                if (modalElement && modalElement.classList.contains('show')) {
+                    document.body.classList.remove('modal-open');
+                    modalElement.classList.remove('show');
+                    modalElement.style.display = 'none';
+                    
+                    // Remove modal backdrop if it exists
+                    const backdrop = document.querySelector('.modal-backdrop');
+                    if (backdrop) {
+                        backdrop.remove();
+                    }
+                }
+            }
+        }, 100);
     }
     
     function createPlaceholder(icon, message, isError = false) {
@@ -188,6 +207,14 @@ document.addEventListener('DOMContentLoaded', function() {
         // Get the current image mode
         const mode = elements.gridMode.checked ? 'grid' : 'single';
         
+        // Store the selected location
+        state.selectedLocation = { lat, lng };
+        
+        // Reset analysis state when selecting a new location
+        elements.maskContainer.innerHTML = createPlaceholder('fill-drip', 'Analyze an image to view segmentation mask');
+        elements.analysisSection.style.display = 'none';
+        elements.locationsResult.innerHTML = '';
+        
         // Get satellite image
         getSatelliteImage(lat, lng, mode);
     }
@@ -206,6 +233,9 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Clear any existing images
         elements.satelliteContainer.innerHTML = '';
+        
+        // Reset current image path
+        state.currentImagePath = null;
         
         // Use POST method instead of GET
         fetch('/get-satellite-image', {
@@ -313,8 +343,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 return response.json();
             })
             .then(data => {
-                hideLoading();
-                
                 if (data.status === 'success') {
                     // Display the segmentation mask
                     elements.maskContainer.innerHTML = `
@@ -328,6 +356,9 @@ document.addEventListener('DOMContentLoaded', function() {
                         addMaskHoverFunctionality(maskImage);
                     }
                     
+                    // Show the analysis section
+                    elements.analysisSection.style.display = 'block';
+                    
                     // Now get the land proportions
                     getLandProportions(state.currentImagePath);
                 } else {
@@ -336,6 +367,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         data.message || 'Error generating segmentation mask',
                         true
                     );
+                    hideLoading();
                 }
             })
             .catch(error => {
@@ -406,6 +438,12 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     function getLandProportions(imagePath) {
+        // Set a timeout to ensure loading is hidden even if the request takes too long
+        const loadingTimeout = setTimeout(() => {
+            hideLoading();
+            console.warn("Land proportions request timed out, but continuing...");
+        }, 10000); // 10 seconds timeout
+        
         fetch('/get-land-proportions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -418,14 +456,23 @@ document.addEventListener('DOMContentLoaded', function() {
                 return response.json();
             })
             .then(data => {
+                clearTimeout(loadingTimeout);
+                
                 if (data.status === 'success' && data.proportions) {
                     displayProportions(data.proportions);
                 } else {
                     console.error("Error getting land proportions:", data);
+                    hideLoading();
                 }
             })
             .catch(error => {
+                clearTimeout(loadingTimeout);
                 console.error("Land proportions error:", error);
+                hideLoading();
+            })
+            .finally(() => {
+                // Ensure loading is always hidden when the request completes
+                hideLoading();
             });
     }
     
@@ -487,6 +534,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
         });
+    }
+    
+    function displayProportions(proportions) {
+        try {
+            createProportionsChart(proportions);
+        } catch (error) {
+            console.error("Error creating proportions chart:", error);
+        } finally {
+            // Always hide loading when done
+            hideLoading();
+        }
     }
     
     function updateLocationDisplay(lat, lng) {
