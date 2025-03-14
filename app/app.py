@@ -13,16 +13,11 @@ from run_api import SatelliteAPI
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('app.log')
-    ]
+    handlers=[logging.StreamHandler(), logging.FileHandler('app.log')]
 )
 logger = logging.getLogger('developerio_app')
 
-app = Flask(__name__, 
-    static_folder='static',
-    template_folder='templates')
+app = Flask(__name__, static_folder='static', template_folder='templates')
 cloud_client = CloudStorageClient()
 predictor = RegionPredictor()
 satellite_api = SatelliteAPI(mode='single') 
@@ -72,15 +67,13 @@ def search_location():
 @app.route('/get-satellite-image', methods=['POST'])
 def get_satellite_image():
     data = request.json
-    lat = data.get('lat')
-    lon = data.get('lng')
+    lat, lon = data.get('lat'), data.get('lng')
     mode = data.get('mode', 'single')
     
     if not lat or not lon:
         return jsonify({'status': 'error', 'message': 'Latitude and longitude are required'})
     
     try:
-        # Update API mode if necessary
         if satellite_api.mode != mode:
             satellite_api.mode = mode
             logger.info(f"Updated satellite API mode to {mode}")
@@ -96,21 +89,12 @@ def get_satellite_image():
                 image_id = f"img_{i}_{os.path.basename(path)}"
                 image_urls.append(f"/direct-image/{image_id}")
             
-            return jsonify({
-                'status': 'success',
-                'image_paths': image_urls
-            })
+            return jsonify({'status': 'success', 'image_paths': image_urls})
         else:
-            return jsonify({
-                'status': 'error',
-                'message': result['message']
-            })
+            return jsonify({'status': 'error', 'message': result['message']})
     except Exception as e:
         logger.error(f"Error in get_satellite_image: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': 'An error occurred while fetching satellite imagery'
-        })
+        return jsonify({'status': 'error', 'message': 'An error occurred while fetching satellite imagery'})
 
 @app.route('/direct-image/<path:image_id>', methods=['GET'])
 def direct_image(image_id):
@@ -122,7 +106,6 @@ def direct_image(image_id):
         index = int(parts[1])
         filename = parts[2]
         
-        # First try to serve from memory
         if index < len(satellite_api.image_bytes):
             return send_file(
                 io.BytesIO(satellite_api.image_bytes[index]),
@@ -130,13 +113,11 @@ def direct_image(image_id):
                 download_name=filename
             )
         
-        # Then try to serve from disk
         for path in satellite_api.image_paths:
             if os.path.basename(path) == filename:
                 if os.path.exists(path) and os.path.getsize(path) > 0:
                     return send_file(path, mimetype='image/jpeg')
         
-        # If all else fails
         return jsonify({'status': 'error', 'message': 'Image not found'}), 404
     
     except Exception as e:
@@ -165,7 +146,6 @@ def get_segmentation():
         
         actual_path = satellite_api.image_paths[index]
         
-        # If file doesn't exist on disk but we have it in memory, write it to disk
         if (not os.path.exists(actual_path) or os.path.getsize(actual_path) == 0) and index < len(satellite_api.image_bytes):
             try:
                 os.makedirs(os.path.dirname(actual_path), exist_ok=True)
@@ -189,29 +169,18 @@ def get_segmentation():
             mask_bytes = buffer.tobytes()
             
             satellite_api.masks[mask_id] = mask_bytes
-            
             mask_url = f"/direct-mask/{mask_id}"
             
-            return jsonify({
-                'status': 'success',
-                'mask_path': mask_url
-            })
+            return jsonify({'status': 'success', 'mask_path': mask_url})
         else:
-            return jsonify({
-                'status': 'error', 
-                'message': result['message']
-            })
+            return jsonify({'status': 'error', 'message': result['message']})
     except Exception as e:
         logger.error(f"Error in get_segmentation: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': f'Error processing mask: {str(e)}'
-        })
+        return jsonify({'status': 'error', 'message': f'Error processing mask: {str(e)}'})
 
 @app.route('/direct-mask/<path:mask_id>', methods=['GET'])
 def direct_mask(mask_id):
     try:
-        # Try to serve from memory first
         if hasattr(satellite_api, 'masks') and mask_id in satellite_api.masks:
             return send_file(
                 io.BytesIO(satellite_api.masks[mask_id]),
@@ -219,7 +188,6 @@ def direct_mask(mask_id):
                 download_name=mask_id.split('_')[-1]
             )
         
-        # Then try to serve from disk
         parts = mask_id.split('_', 2)
         if len(parts) >= 3:
             index = int(parts[1])
@@ -252,21 +220,12 @@ def get_land_proportions():
         loop.close()
         
         if result['status'] == 'success':
-            return jsonify({
-                'status': 'success',
-                'proportions': result['proportions']
-            })
+            return jsonify({'status': 'success', 'proportions': result['proportions']})
         else:
-            return jsonify({
-                'status': 'error',
-                'message': result['message']
-            })
+            return jsonify({'status': 'error', 'message': result['message']})
     except Exception as e:
         logger.error(f"Error in get_land_proportions: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': 'An error occurred while calculating land proportions'
-        })
+        return jsonify({'status': 'error', 'message': 'An error occurred while calculating land proportions'})
 
 @app.route('/identify-suitable-locations', methods=['POST'])
 def identify_suitable_locations():
@@ -284,43 +243,26 @@ def identify_suitable_locations():
         loop.close()
         
         if result['status'] == 'success':
-            return jsonify({
-                'status': 'success',
-                'suitable_locations': result['suitable_locations']
-            })
+            return jsonify({'status': 'success', 'suitable_locations': result['suitable_locations']})
         else:
-            return jsonify({
-                'status': 'error',
-                'message': result['message']
-            })
+            return jsonify({'status': 'error', 'message': result['message']})
     except Exception as e:
         logger.error(f"Error in identify_suitable_locations: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': 'An error occurred while identifying suitable locations'
-        })
+        return jsonify({'status': 'error', 'message': 'An error occurred while identifying suitable locations'})
 
 @app.route('/reverse-geocode', methods=['GET'])
 def reverse_geocode():
-    lat = request.args.get('lat')
-    lng = request.args.get('lng')
+    lat, lng = request.args.get('lat'), request.args.get('lng')
     
     if not lat or not lng:
         return jsonify({'status': 'error', 'message': 'Latitude and longitude are required'})
     
     try:
-        # Simplified implementation - in production would call actual geocoding service
         location_name = f"Location at {lat}, {lng}"
-        return jsonify({
-            'status': 'success',
-            'address': location_name
-        })
+        return jsonify({'status': 'success', 'address': location_name})
     except Exception as e:
         logger.error(f"Error in reverse_geocode: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': 'An error occurred during reverse geocoding'
-        })
+        return jsonify({'status': 'error', 'message': 'An error occurred during reverse geocoding'})
 
 @app.route('/upload', methods=['POST'])
 def upload_files():
@@ -341,7 +283,6 @@ def upload_files():
                 url = cloud_client.upload_file(temp_path, f"uploads/{filename}")
                 uploaded_urls.append(url)
                 
-                # Clean up temporary file
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
         
@@ -365,11 +306,9 @@ def list_regions():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    # Ensure the static directories exist
     os.makedirs(os.path.join('static', 'css'), exist_ok=True)
     os.makedirs(os.path.join('static', 'js'), exist_ok=True)
     
-    # Create symbolic links or copy files if needed
     css_path = os.path.join('static', 'css', 'style.css')
     js_path = os.path.join('static', 'js', 'main.js')
     

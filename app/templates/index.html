@@ -4,174 +4,206 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DeveloperIO - Satellite Imagery Analysis</title>
+    <!-- CSS Resources -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css">
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <!-- JS Resources -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
 </head>
 <body>
     <!-- Navigation Bar -->
-    <nav class="navbar navbar-expand-lg fixed-top">
-        <div class="container-fluid">
+    <nav class="navbar navbar-expand-lg navbar-light fixed-top">
+        <div class="container">
             <a class="navbar-brand" href="#">
-                <span class="brand-name">DeveloperIO</span>
+                <i class="fas fa-satellite text-primary me-2"></i>
+                DeveloperIO
             </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav ms-auto">
                     <li class="nav-item">
-                        <a class="nav-link active" href="#">Home</a>
+                        <a class="nav-link" href="#hero-section">Home</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="#">About</a>
+                        <a class="nav-link" href="#content-section">Analysis</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="#">Contact</a>
+                        <a class="nav-link" href="#about-section">About</a>
                     </li>
                 </ul>
             </div>
         </div>
     </nav>
 
-    <!-- Hero Section with Map -->
-    <section id="hero-section">
-        <div id="map-container"></div>
+    <!-- Hero Section -->
+    <section id="hero-section" class="hero-section">
+        <!-- Map as background -->
+        <div id="map-container" class="map-container"></div>
         
-        <!-- Floating Search Container -->
-        <div class="floating-search-container">
-            <div class="search-card">
-                <h2>Find Satellite Imagery</h2>
-                <p class="lead">Search by location or click directly on the map</p>
-                <div class="input-group">
-                    <span class="input-group-text"><i class="fas fa-search"></i></span>
-                    <input type="text" id="location-search" class="form-control" 
-                        placeholder="Enter location (Country, City, Postcode)" aria-label="Location search">
-                    <button class="btn btn-primary" type="button" id="search-button">Search</button>
+        <div class="container">
+            <div class="row">
+                <div class="col-lg-6">
+                    <div class="hero-content">
+                        <h1 class="hero-title">Satellite Imagery Analysis</h1>
+                        <p class="hero-subtitle">Analyze land use and identify suitable locations for various purposes using satellite imagery and AI.</p>
+                        
+                        <div class="search-container">
+                            <div class="input-group mb-3">
+                                <input type="text" id="location-search" class="form-control" placeholder="Search for a location...">
+                                <button id="search-button" class="btn btn-primary">
+                                    <i class="fas fa-search"></i>
+                                </button>
+                            </div>
+                            <div id="location-suggestions" class="list-group location-suggestions"></div>
+                        </div>
+                        
+                        <div class="current-location mt-3">
+                            <h6 id="current-location-display">No location selected</h6>
+                            <p id="coordinates-display" class="text-muted small"></p>
+                        </div>
+                    </div>
                 </div>
-                <div id="location-suggestions" class="list-group suggestions-dropdown"></div>
-            </div>
-            
-            <div class="map-instructions">
-                <i class="fas fa-map-marker-alt"></i> Click anywhere on the map to select a location
             </div>
         </div>
     </section>
 
-    <!-- Main Content Area -->
-    <section id="content-section" class="container mt-5" style="display: none;">
-        <div class="row mb-4">
-            <div class="col-12">
-                <div class="location-banner">
-                    <h2 id="current-location-display">Location Analysis</h2>
-                    <span id="coordinates-display" class="text-muted"></span>
-                </div>
-            </div>
-        </div>
-        
-        <div class="row" id="imagery-section">
-            <!-- Satellite Imagery Section -->
-            <div class="col-md-6 mb-4">
-                <div class="card imagery-card">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5><i class="fas fa-satellite"></i> Satellite Imagery</h5>
-                        <div class="form-group image-mode-toggle">
-                            <div class="form-check form-check-inline">
-                                <input class="form-check-input" type="radio" name="imageMode" id="singleMode" value="single" checked>
-                                <label class="form-check-label" for="singleMode">Single</label>
-                            </div>
-                            <div class="form-check form-check-inline">
-                                <input class="form-check-input" type="radio" name="imageMode" id="gridMode" value="grid">
-                                <label class="form-check-label" for="gridMode">Grid</label>
+    <!-- Content Section -->
+    <section id="content-section" class="content-section" style="display: none;">
+        <div class="container">
+            <div class="row mb-4">
+                <!-- Satellite Imagery Section -->
+                <div class="col-md-6 mb-4">
+                    <div class="card imagery-card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5><i class="fas fa-satellite"></i> Satellite Imagery</h5>
+                            <div class="btn-group" role="group" aria-label="Image mode">
+                                <input type="radio" class="btn-check" name="imageMode" id="singleMode" autocomplete="off" checked>
+                                <label class="btn btn-outline-primary" for="singleMode">Single</label>
+                                <input type="radio" class="btn-check" name="imageMode" id="gridMode" autocomplete="off">
+                                <label class="btn btn-outline-primary" for="gridMode">Grid</label>
                             </div>
                         </div>
-                    </div>
-                    <div class="card-body">
-                        <div id="satellite-image-container" class="text-center">
-                            <div class="placeholder-container">
-                                <i class="fas fa-satellite-dish placeholder-icon"></i>
-                                <p class="text-muted">Select a location to view satellite imagery</p>
-                            </div>
-                        </div>
-                        <div class="d-grid gap-2 d-md-flex justify-content-md-center mt-3">
-                            <button class="btn btn-analyze" type="button" id="analyze-button" disabled>
-                                <i class="fas fa-microscope"></i> Analyze Image
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Segmentation Mask Section -->
-            <div class="col-md-6 mb-4">
-                <div class="card imagery-card">
-                    <div class="card-header">
-                        <h5><i class="fas fa-layer-group"></i> Segmentation Mask</h5>
-                    </div>
-                    <div class="card-body">
-                        <div id="mask-image-container" class="text-center">
-                            <div class="placeholder-container">
-                                <i class="fas fa-fill-drip placeholder-icon"></i>
-                                <p class="text-muted">Analyze an image to view segmentation mask</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="row" id="analysis-section" style="display: none;">
-            <!-- Land Proportions Section -->
-            <div class="col-md-6 mb-4">
-                <div class="card analysis-card">
-                    <div class="card-header">
-                        <h5><i class="fas fa-chart-pie"></i> Land Type Proportions</h5>
-                    </div>
-                    <div class="card-body">
-                        <canvas id="proportions-chart"></canvas>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Suitable Locations Section -->
-            <div class="col-md-6 mb-4">
-                <div class="card analysis-card">
-                    <div class="card-header">
-                        <h5><i class="fas fa-map-marker-alt"></i> Identify Suitable Locations</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="row mb-3">
-                            <div class="col-md-6">
-                                <select class="form-select" id="purpose-select">
-                                    <option selected>Select purpose...</option>
-                                    <option value="wind_turbines">Wind Turbines</option>
-                                    <option value="solar_panels">Solar Panels</option>
-                                    <option value="agriculture">Agriculture</option>
-                                    <option value="urban_development">Urban Development</option>
-                                </select>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="input-group">
-                                    <input type="number" class="form-control" id="min-area-input" placeholder="Min area (sq.m)" value="1000">
-                                    <span class="input-group-text">sq.m</span>
+                        <div class="card-body">
+                            <div id="satellite-image-container" class="text-center">
+                                <div class="placeholder-container">
+                                    <i class="fas fa-satellite placeholder-icon"></i>
+                                    <p class="text-muted">Search for a location to view satellite imagery</p>
                                 </div>
                             </div>
-                            <div class="col-md-2">
-                                <button class="btn btn-primary w-100" type="button" id="identify-button">
-                                    <i class="fas fa-search-location"></i>
+                            <div class="text-center mt-3">
+                                <button id="analyze-button" class="btn btn-primary">
+                                    <i class="fas fa-microscope me-2"></i>Analyze Image
                                 </button>
                             </div>
                         </div>
-                        <div id="suitable-locations-result" class="mt-3">
-                            <div class="placeholder-container">
-                                <i class="fas fa-map-pin placeholder-icon"></i>
-                                <p class="text-muted">Select a purpose to identify suitable locations</p>
+                    </div>
+                </div>
+                
+                <!-- Segmentation Mask Section -->
+                <div class="col-md-6 mb-4">
+                    <div class="card imagery-card">
+                        <div class="card-header">
+                            <h5><i class="fas fa-layer-group"></i> Segmentation Mask</h5>
+                        </div>
+                        <div class="card-body">
+                            <div id="mask-image-container" class="text-center">
+                                <div class="placeholder-container">
+                                    <i class="fas fa-fill-drip placeholder-icon"></i>
+                                    <p class="text-muted">Analyze an image to view segmentation mask</p>
+                                </div>
                             </div>
                         </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Analysis Section -->
+            <div id="analysis-section" class="row" style="display: none;">
+                <!-- Land Proportions Section -->
+                <div class="col-md-6 mb-4">
+                    <div class="card analysis-card">
+                        <div class="card-header">
+                            <h5><i class="fas fa-chart-pie"></i> Land Type Analysis</h5>
+                        </div>
+                        <div class="card-body">
+                            <canvas id="proportions-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Identify Suitable Locations Section -->
+                <div class="col-md-6 mb-4">
+                    <div class="card analysis-card">
+                        <div class="card-header">
+                            <h5><i class="fas fa-map-marked-alt"></i> Identify Suitable Locations</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <select id="purpose-select" class="form-select">
+                                        <option selected>Select purpose...</option>
+                                        <option value="agriculture">Agriculture</option>
+                                        <option value="urban_development">Urban Development</option>
+                                        <option value="conservation">Conservation</option>
+                                        <option value="water_management">Water Management</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="input-group">
+                                        <input type="number" id="min-area-input" class="form-control" value="1000" min="100">
+                                        <span class="input-group-text">sq.m</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-2">
+                                    <button id="identify-button" class="btn btn-primary w-100">
+                                        <i class="fas fa-search-location"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="suitable-locations-result"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- About Section -->
+    <section id="about-section" class="about-section">
+        <div class="container">
+            <h2 class="section-title text-center mb-5">About This Project</h2>
+            <div class="row">
+                <div class="col-md-4 mb-4">
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <i class="fas fa-satellite"></i>
+                        </div>
+                        <h4>Satellite Imagery</h4>
+                        <p>Access high-resolution satellite imagery from anywhere in the world to analyze land use patterns.</p>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-4">
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <i class="fas fa-brain"></i>
+                        </div>
+                        <h4>AI-Powered Analysis</h4>
+                        <p>Utilize advanced machine learning algorithms to segment and classify different land types.</p>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-4">
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <i class="fas fa-map-marked-alt"></i>
+                        </div>
+                        <h4>Location Identification</h4>
+                        <p>Identify suitable locations for various purposes based on land type analysis and requirements.</p>
                     </div>
                 </div>
             </div>
@@ -182,7 +214,7 @@
     <div class="modal fade" id="loadingModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
-                <div class="modal-body text-center p-5">
+                <div class="modal-body text-center py-4">
                     <div class="spinner-border text-primary mb-3" role="status">
                         <span class="visually-hidden">Loading...</span>
                     </div>

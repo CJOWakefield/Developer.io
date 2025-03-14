@@ -18,7 +18,8 @@ document.addEventListener('DOMContentLoaded', function() {
         contentSection: document.getElementById('content-section'),
         locationDisplay: document.getElementById('current-location-display'),
         coordsDisplay: document.getElementById('coordinates-display'),
-        mapContainer: document.getElementById('map-container')
+        mapContainer: document.getElementById('map-container'),
+        heroSection: document.getElementById('hero-section')
     };
     
     // State variables
@@ -26,6 +27,7 @@ document.addEventListener('DOMContentLoaded', function() {
         selectedLocation: null,
         currentImagePath: null,
         proportionsChart: null,
+        derivedProportionsChart: null,
         map: null,
         marker: null,
         loadingModal: new bootstrap.Modal(document.getElementById('loadingModal'))
@@ -43,249 +45,7 @@ document.addEventListener('DOMContentLoaded', function() {
     elements.singleMode.addEventListener('change', updateImageMode);
     elements.gridMode.addEventListener('change', updateImageMode);
     
-    function updateImageMode() {
-        if(state.selectedLocation) {
-            getSatelliteImage(state.selectedLocation.lat, state.selectedLocation.lng);
-        }
-    }
-    
-    function initMap() {
-        // Create the map with custom options
-        state.map = L.map('map-container', {
-            zoomControl: false,
-            attributionControl: true,
-            doubleClickZoom: true,
-            scrollWheelZoom: true
-        }).setView([40, -95], 4);
-        
-        // Add zoom control to bottom right
-        L.control.zoom({
-            position: 'bottomright'
-        }).addTo(state.map);
-        
-        // Add tile layer
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            subdomains: 'abcd',
-            maxZoom: 19
-        }).addTo(state.map);
-        
-        // Add click event handler
-        state.map.on('click', handleMapClick);
-        
-        // Add coordinate display on hover
-        const coordInfo = L.control({position: 'bottomleft'});
-        coordInfo.onAdd = function() {
-            this._div = L.DomUtil.create('div', 'coord-info');
-            this.update();
-            return this._div;
-        };
-        coordInfo.update = function(coords) {
-            this._div.innerHTML = coords ? 
-                `<small>Lat: ${coords.lat.toFixed(4)}, Lng: ${coords.lng.toFixed(4)}</small>` : '';
-        };
-        coordInfo.addTo(state.map);
-        
-        state.map.on('mousemove', e => coordInfo.update(e.latlng));
-        state.map.on('mouseout', () => coordInfo.update(null));
-        
-        // Set cursor to pointer over map
-        elements.mapContainer.style.cursor = 'pointer';
-    }
-    
-    function initNavbarScroll() {
-        window.addEventListener('scroll', function() {
-            const navbar = document.querySelector('.navbar');
-            navbar.classList.toggle('navbar-scrolled', window.scrollY > 50);
-        });
-    }
-    
-    function handleMapClick(e) {
-        const lat = e.latlng.lat.toFixed(6);
-        const lng = e.latlng.lng.toFixed(6);
-        
-        setMapMarker(lat, lng);
-        
-        // Skip reverse geocoding and directly create a location with coordinates
-        const locationName = `Location at ${lat}, ${lng}`;
-        const location = {
-            name: locationName,
-            lat: lat,
-            lng: lng
-        };
-        
-        // Update the search input
-        elements.locationSearch.value = locationName;
-        
-        // Store selected location
-        state.selectedLocation = location;
-        
-        // Process the selected location
-        handleSelectedLocation(location);
-    }
-    
-    function setMapMarker(lat, lng) {
-        // Remove existing marker if any
-        if (state.marker) {
-            state.map.removeLayer(state.marker);
-        }
-        
-        // Create custom marker icon
-        const customIcon = L.divIcon({
-            className: 'custom-marker',
-            iconSize: [20, 20],
-            iconAnchor: [10, 10]
-        });
-        
-        // Create new marker with popup
-        state.marker = L.marker([lat, lng], {
-            icon: customIcon,
-            draggable: true
-        }).addTo(state.map);
-        
-        // Add popup to marker
-        state.marker.bindPopup(`
-            <div class="marker-popup">
-                <strong>Selected Location</strong><br>
-                <span class="text-muted">${lat}, ${lng}</span>
-            </div>
-        `).openPopup();
-        
-        // When marker is dragged, update coordinates
-        state.marker.on('dragend', function(event) {
-            const position = event.target.getLatLng();
-            reverseGeocode(position.lat.toFixed(6), position.lng.toFixed(6));
-        });
-        
-        // Smooth animation to marker location
-        state.map.flyTo(
-            [lat, lng], 
-            state.map.getZoom() < 10 ? 10 : state.map.getZoom(), 
-            { duration: 1, easeLinearity: 0.5 }
-        );
-    }
-    
-    function reverseGeocode(lat, lng) {
-        showLoading('Looking up address...');
-        
-        fetch(`/reverse-geocode?lat=${lat}&lng=${lng}`)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! Status: ${response.status}`);
-                }
-                return response.json();
-            })
-            .then(data => {
-                hideLoading();
-                
-                if (data.status === 'success') {
-                    // Update the search input with the address
-                    elements.locationSearch.value = data.address;
-                    
-                    // Create location object
-                    const location = {
-                        name: data.address,
-                        lat: lat,
-                        lng: lng
-                    };
-                    
-                    // Store selected location
-                    state.selectedLocation = location;
-                    
-                    // Highlight the search bar
-                    elements.locationSearch.classList.add('border-primary');
-                    setTimeout(() => {
-                        elements.locationSearch.classList.remove('border-primary');
-                    }, 1500);
-                    
-                    // Focus on search button
-                    elements.searchButton.focus();
-                } else {
-                    handleGenericLocation(lat, lng);
-                }
-            })
-            .catch((error) => {
-                hideLoading();
-                console.error('Error in reverse geocoding:', error);
-                handleGenericLocation(lat, lng);
-            });
-    }
-    
-    function handleGenericLocation(lat, lng) {
-        const locationName = `Location at ${lat}, ${lng}`;
-        elements.locationSearch.value = locationName;
-        state.selectedLocation = {
-            name: locationName,
-            lat: lat,
-            lng: lng
-        };
-    }
-    
-    function searchLocation() {
-        // If we already have a selectedLocation from map, use it directly
-        if (state.selectedLocation && 
-            elements.locationSearch.value === state.selectedLocation.name) {
-            handleSelectedLocation(state.selectedLocation);
-            return;
-        }
-        
-        // Otherwise, perform text-based search
-        const query = elements.locationSearch.value.trim();
-        if (!query) return;
-        
-        showLoading('Searching for location...');
-        elements.locationSuggestions.innerHTML = '';
-        
-        fetch(`/search-location?query=${encodeURIComponent(query)}`)
-            .then(response => response.json())
-            .then(data => {
-                hideLoading();
-                
-                if (data.status === 'error' || data.suggestions.length === 0) {
-                    elements.locationSuggestions.innerHTML = '<div class="list-group-item text-danger">No locations found. Try a different search.</div>';
-                    return;
-                }
-                
-                data.suggestions.forEach(suggestion => {
-                    const item = document.createElement('button');
-                    item.className = 'list-group-item list-group-item-action';
-                    item.textContent = suggestion.name;
-                    item.addEventListener('click', () => {
-                        handleSelectedLocation(suggestion);
-                        elements.locationSuggestions.innerHTML = '';
-                    });
-                    elements.locationSuggestions.appendChild(item);
-                });
-            })
-            .catch(() => {
-                hideLoading();
-                elements.locationSuggestions.innerHTML = '<div class="list-group-item text-danger">Error searching location. Please try again.</div>';
-            });
-    }
-    
-    function handleSelectedLocation(location) {
-        state.selectedLocation = location;
-        elements.locationSearch.value = location.name;
-        
-        // Update location info
-        elements.locationDisplay.textContent = location.name;
-        elements.coordsDisplay.textContent = `Coordinates: ${location.lat}, ${location.lng}`;
-        
-        // Set map marker if it's not already set
-        setMapMarker(location.lat, location.lng);
-        
-        // Show content section and get satellite image
-        elements.contentSection.style.display = 'block';
-        getSatelliteImage(location.lat, location.lng);
-        
-        // Scroll to content section
-        scrollToContentSection();
-    }
-    
-    function scrollToContentSection() {
-        elements.contentSection.scrollIntoView({ behavior: 'smooth' });
-    }
-    
+    // Helper functions
     function showLoading(message = 'Processing your request...') {
         document.getElementById('loading-message').textContent = message;
         state.loadingModal.show();
@@ -295,248 +55,354 @@ document.addEventListener('DOMContentLoaded', function() {
         state.loadingModal.hide();
     }
     
-    function getSatelliteImage(lat, lng) {
-        elements.satelliteContainer.innerHTML = `
+    function createPlaceholder(icon, message, isError = false) {
+        return `
             <div class="placeholder-container">
-                <div class="spinner-border" role="status">
-                    <span class="visually-hidden">Loading...</span>
-                </div>
-                <p class="text-muted mt-3">Loading satellite imagery...</p>
-            </div>`;
-        elements.analyzeButton.disabled = true;
+                <i class="fas fa-${icon} placeholder-icon ${isError ? 'text-danger' : ''}"></i>
+                <p class="text-muted">${message}</p>
+            </div>
+        `;
+    }
+    
+    function initNavbarScroll() {
+        window.addEventListener('scroll', function() {
+            const navbar = document.querySelector('.navbar');
+            if (window.scrollY > 50) {
+                navbar.classList.add('navbar-scrolled');
+            } else {
+                navbar.classList.remove('navbar-scrolled');
+            }
+        });
+    }
+    
+    function initMap() {
+        // Initialize the map
+        state.map = L.map(elements.mapContainer, {
+            zoomControl: false,  // We'll add zoom control in a better position
+            attributionControl: false  // Hide attribution for cleaner look
+        }).setView([20, 0], 2);
         
-        const mode = document.querySelector('input[name="imageMode"]:checked').value;
+        // Add zoom control to top-right
+        L.control.zoom({
+            position: 'topright'
+        }).addTo(state.map);
         
-        showLoading('Fetching satellite imagery...');
+        // Add attribution in bottom-right
+        L.control.attribution({
+            position: 'bottomright',
+            prefix: false
+        }).addAttribution('© OpenStreetMap contributors').addTo(state.map);
         
-        fetch('/get-satellite-image', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lat, lng, mode })
-        })
+        // Add tile layer
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19
+        }).addTo(state.map);
+        
+        // Add click event to map
+        state.map.on('click', function(e) {
+            const lat = e.latlng.lat;
+            const lng = e.latlng.lng;
+            handleSelectedLocation(lat, lng);
+        });
+        
+        // Resize map when window is resized
+        window.addEventListener('resize', function() {
+            state.map.invalidateSize();
+        });
+    }
+    
+    function searchLocation() {
+        const query = elements.locationSearch.value.trim();
+        
+        if (!query) {
+            return;
+        }
+        
+        showLoading('Searching for location...');
+        
+        fetch(`/search-location?query=${encodeURIComponent(query)}`)
             .then(response => response.json())
             .then(data => {
                 hideLoading();
                 
-                if (data.status === 'error') {
-                    elements.satelliteContainer.innerHTML = `
-                        <div class="placeholder-container">
-                            <i class="fas fa-exclamation-circle placeholder-icon text-danger"></i>
-                            <p class="text-danger">${data.message}</p>
-                        </div>`;
-                    return;
-                }
-                
-                if (!data.image_paths || data.image_paths.length === 0) {
-                    elements.satelliteContainer.innerHTML = `
-                        <div class="placeholder-container">
-                            <i class="fas fa-satellite-dish placeholder-icon text-danger"></i>
-                            <p class="text-danger">No images available.</p>
-                        </div>`;
-                    return;
-                }
-                
-                // Display images
-                elements.satelliteContainer.innerHTML = '';
-                
-                if (mode === 'single' && data.image_paths.length > 0) {
-                    displaySingleImage(data.image_paths[0]);
-                } else if (mode === 'grid' && data.image_paths.length > 0) {
-                    displayImageGrid(data.image_paths);
+                if (data.status === 'success' && data.suggestions && data.suggestions.length > 0) {
+                    // If only one result, select it directly
+                    if (data.suggestions.length === 1) {
+                        const location = data.suggestions[0];
+                        handleSelectedLocation(location.lat, location.lng);
+                        elements.locationSuggestions.innerHTML = '';
+                        return;
+                    }
+                    
+                    // Otherwise show suggestions
+                    displayLocationSuggestions(data.suggestions);
                 } else {
-                    elements.satelliteContainer.innerHTML = `
-                        <div class="placeholder-container">
-                            <i class="fas fa-satellite-dish placeholder-icon text-danger"></i>
-                            <p class="text-danger">No images available.</p>
-                        </div>`;
+                    elements.locationSuggestions.innerHTML = `
+                        <div class="list-group-item list-group-item-action text-danger">
+                            <i class="fas fa-exclamation-circle me-2"></i>
+                            No locations found. Try a different search.
+                        </div>
+                    `;
                 }
             })
             .catch(() => {
                 hideLoading();
-                elements.satelliteContainer.innerHTML = `
-                    <div class="placeholder-container">
-                        <i class="fas fa-exclamation-triangle placeholder-icon text-danger"></i>
-                        <p class="text-danger">Error loading satellite imagery. Please try again.</p>
-                    </div>`;
+                elements.locationSuggestions.innerHTML = `
+                    <div class="list-group-item list-group-item-action text-danger">
+                        <i class="fas fa-exclamation-circle me-2"></i>
+                        Error searching for location. Please try again.
+                    </div>
+                `;
             });
     }
     
-    function displaySingleImage(imagePath) {
-        state.currentImagePath = imagePath;
-        const img = document.createElement('img');
+    function displayLocationSuggestions(suggestions) {
+        let html = '';
         
-        loadImageWithRetry(img, state.currentImagePath);
-        img.className = 'img-fluid satellite-image';
-        img.alt = 'Satellite Image';
-        
-        const imageContainer = document.createElement('div');
-        imageContainer.className = 'image-container';
-        imageContainer.appendChild(img);
-        
-        // Add image info overlay
-        imageContainer.innerHTML += `
-            <div class="image-info-overlay">
-                <div class="image-info-content">
-                    <span><i class="fas fa-map-marker-alt"></i> ${state.selectedLocation.lat}, ${state.selectedLocation.lng}</span>
-                </div>
-            </div>`;
-        
-        elements.satelliteContainer.appendChild(imageContainer);
-        elements.analyzeButton.disabled = false;
-    }
-    
-    function displayImageGrid(imagePaths) {
-        const gridContainer = document.createElement('div');
-        gridContainer.className = 'satellite-grid';
-        
-        // Select the first image by default
-        state.currentImagePath = imagePaths[0];
-        
-        imagePaths.forEach((path, index) => {
-            const imgContainer = document.createElement('div');
-            imgContainer.className = `satellite-grid-item ${index === 0 ? 'selected' : ''}`;
-            
-            const img = document.createElement('img');
-            loadImageWithRetry(img, path);
-            img.className = 'img-fluid satellite-grid-image';
-            img.alt = `Satellite Image ${index + 1}`;
-            
-            const gridPosition = document.createElement('div');
-            gridPosition.className = 'grid-position';
-            gridPosition.innerHTML = `<span>${index + 1}</span>`;
-            
-            img.addEventListener('click', () => {
-                document.querySelectorAll('.satellite-grid-item').forEach(item => {
-                    item.classList.remove('selected');
-                });
-                imgContainer.classList.add('selected');
-                state.currentImagePath = path;
-                elements.analyzeButton.disabled = false;
-            });
-            
-            imgContainer.appendChild(img);
-            imgContainer.appendChild(gridPosition);
-            gridContainer.appendChild(imgContainer);
+        suggestions.forEach(location => {
+            html += `
+                <button class="list-group-item list-group-item-action location-suggestion" 
+                    data-lat="${location.lat}" 
+                    data-lng="${location.lng}">
+                    <i class="fas fa-map-marker-alt me-2 text-primary"></i>
+                    ${location.name}
+                </button>
+            `;
         });
         
-        elements.satelliteContainer.appendChild(gridContainer);
+        elements.locationSuggestions.innerHTML = html;
         
-        // Add image info below the grid
-        const gridInfo = document.createElement('div');
-        gridInfo.className = 'grid-info mt-3';
-        gridInfo.innerHTML = `
-            <div class="d-flex align-items-center justify-content-center text-muted">
-                <i class="fas fa-info-circle me-2"></i>
-                <small>Click on an image to select it for analysis</small>
-            </div>`;
-        elements.satelliteContainer.appendChild(gridInfo);
-        
-        elements.analyzeButton.disabled = false;
+        // Add event listeners to suggestions
+        document.querySelectorAll('.location-suggestion').forEach(item => {
+            item.addEventListener('click', function() {
+                const lat = parseFloat(this.getAttribute('data-lat'));
+                const lng = parseFloat(this.getAttribute('data-lng'));
+                
+                handleSelectedLocation(lat, lng);
+                elements.locationSuggestions.innerHTML = '';
+            });
+        });
     }
     
-    function loadImageWithRetry(imgElement, src, maxRetries = 3) {
-        let retries = 0;
+    function handleSelectedLocation(lat, lng) {
+        // Get the current image mode
+        const mode = elements.gridMode.checked ? 'grid' : 'single';
         
-        function tryLoad() {
-            imgElement.src = `${src}?t=${new Date().getTime()}`;
-            
-            imgElement.onerror = function() {
-                if (retries < maxRetries) {
-                    retries++;
-                    setTimeout(tryLoad, 1000 * Math.pow(2, retries - 1));
-                } else {
-                    imgElement.src = 'data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%22200%22%20height%3D%22200%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20200%20200%22%20preserveAspectRatio%3D%22none%22%3E%3Cdefs%3E%3Cstyle%20type%3D%22text%2Fcss%22%3E%23holder_189b3ff33db%20text%20%7B%20fill%3A%23FF0000%3Bfont-weight%3Abold%3Bfont-family%3AArial%2C%20Helvetica%2C%20Open%20Sans%2C%20sans-serif%2C%20monospace%3Bfont-size%3A10pt%20%7D%20%3C%2Fstyle%3E%3C%2Fdefs%3E%3Cg%20id%3D%22holder_189b3ff33db%22%3E%3Crect%20width%3D%22200%22%20height%3D%22200%22%20fill%3D%22%23F5F5F5%22%3E%3C%2Frect%3E%3Cg%3E%3Ctext%20x%3D%2256.1953125%22%20y%3D%22104.5%22%3EImage%20not%20found%3C%2Ftext%3E%3C%2Fg%3E%3C%2Fg%3E%3C%2Fsvg%3E';
-                }
-            };
+        // Get satellite image
+        getSatelliteImage(lat, lng, mode);
+    }
+    
+    function updateImageMode() {
+        const mode = elements.gridMode.checked ? 'grid' : 'single';
+        
+        if (state.selectedLocation) {
+            showLoading('Loading ' + mode + ' view...');
+            getSatelliteImage(state.selectedLocation.lat, state.selectedLocation.lng, mode);
         }
+    }
+    
+    function getSatelliteImage(lat, lng, mode = 'single') {
+        showLoading('Loading satellite imagery...');
         
-        tryLoad();
+        // Clear any existing images
+        elements.satelliteContainer.innerHTML = '';
+        
+        // Use POST method instead of GET
+        fetch('/get-satellite-image', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                lat: lat,
+                lng: lng,
+                mode: mode
+            })
+        })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Server responded with status: ${response.status}`);
+                }
+                return response.text().then(text => {
+                    try {
+                        return JSON.parse(text);
+                    } catch (e) {
+                        console.error("Failed to parse JSON response:", text.substring(0, 100) + "...");
+                        throw new Error("Invalid JSON response from server");
+                    }
+                });
+            })
+            .then(data => {
+                hideLoading();
+                
+                if (data.status === 'success') {
+                    // Store the current image path for analysis
+                    if (mode === 'single' && data.image_path) {
+                        state.currentImagePath = data.image_path;
+                        
+                        // Display the image
+                        elements.satelliteContainer.innerHTML = `
+                            <img src="${data.image_path}?t=${new Date().getTime()}" 
+                                 alt="Satellite image" class="img-fluid satellite-image">
+                        `;
+                    } else if (data.image_paths && data.image_paths.length > 0) {
+                        // For grid mode, display multiple images
+                        state.currentImagePath = data.image_paths[0]; // Use the first image for analysis
+                        
+                        let gridHtml = '<div class="image-grid">';
+                        data.image_paths.forEach(path => {
+                            gridHtml += `
+                                <div class="grid-item">
+                                    <img src="${path}?t=${new Date().getTime()}" 
+                                         alt="Satellite image" class="img-fluid satellite-image">
+                                </div>
+                            `;
+                        });
+                        gridHtml += '</div>';
+                        elements.satelliteContainer.innerHTML = gridHtml;
+                    } else {
+                        throw new Error("No image paths in response");
+                    }
+                    
+                    // Show the content section
+                    elements.contentSection.style.display = 'block';
+                    
+                    // Scroll to content section
+                    elements.contentSection.scrollIntoView({ behavior: 'smooth' });
+                    
+                    // Update location display
+                    updateLocationDisplay(lat, lng);
+                } else {
+                    elements.satelliteContainer.innerHTML = createPlaceholder(
+                        'exclamation-triangle',
+                        data.message || 'Error loading satellite image',
+                        true
+                    );
+                    console.error("Error in response:", data);
+                }
+            })
+            .catch(error => {
+                hideLoading();
+                elements.satelliteContainer.innerHTML = createPlaceholder(
+                    'exclamation-triangle',
+                    'Error loading satellite image. Please try again.',
+                    true
+                );
+                console.error("Fetch error:", error);
+            });
     }
     
     function analyzeImage() {
-        if (!state.currentImagePath) return;
-        
-        elements.maskContainer.innerHTML = `
-            <div class="placeholder-container">
-                <div class="spinner-border" role="status">
-                    <span class="visually-hidden">Loading...</span>
-                </div>
-                <p class="text-muted mt-3">Generating segmentation mask...</p>
-            </div>`;
+        if (!state.currentImagePath) {
+            alert('Please select a location first');
+            return;
+        }
         
         showLoading('Analyzing satellite imagery...');
         
-        // Get segmentation mask
+        // Use the correct endpoint from app.py: /get-segmentation
         fetch('/get-segmentation', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ image_path: state.currentImagePath })
         })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'error') {
-                    hideLoading();
-                    elements.maskContainer.innerHTML = `
-                        <div class="placeholder-container">
-                            <i class="fas fa-exclamation-circle placeholder-icon text-danger"></i>
-                            <p class="text-danger">${data.message}</p>
-                        </div>`;
-                    return;
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Server responded with status: ${response.status}`);
                 }
-                
-                // Display the mask
-                elements.maskContainer.innerHTML = '';
-                const img = document.createElement('img');
-                
-                loadImageWithRetry(img, data.mask_path);
-                img.className = 'img-fluid mask-image';
-                img.alt = 'Segmentation Mask';
-                
-                const maskContainer = document.createElement('div');
-                maskContainer.className = 'mask-container';
-                maskContainer.appendChild(img);
-                
-                // Add legend for mask colors
-                const maskLegend = document.createElement('div');
-                maskLegend.className = 'mask-legend mt-3';
-                maskLegend.innerHTML = `
-                    <div class="legend-title mb-2">Color Legend</div>
-                    <div class="legend-items">
-                        <div class="legend-item">
-                            <span class="legend-color" style="background-color: #1a9641;"></span>
-                            <span class="legend-label">Vegetation</span>
-                        </div>
-                        <div class="legend-item">
-                            <span class="legend-color" style="background-color: #3288bd;"></span>
-                            <span class="legend-label">Water</span>
-                        </div>
-                        <div class="legend-item">
-                            <span class="legend-color" style="background-color: #d73027;"></span>
-                            <span class="legend-label">Buildings</span>
-                        </div>
-                        <div class="legend-item">
-                            <span class="legend-color" style="background-color: #f1b6da;"></span>
-                            <span class="legend-label">Roads</span>
-                        </div>
-                    </div>`;
-                
-                elements.maskContainer.appendChild(maskContainer);
-                elements.maskContainer.appendChild(maskLegend);
-                
-                // Show analysis section
-                elements.analysisSection.style.display = 'flex';
-                
-                // Get land proportions
-                getLandProportions(state.currentImagePath);
+                return response.json();
             })
-            .catch(() => {
+            .then(data => {
                 hideLoading();
-                elements.maskContainer.innerHTML = `
-                    <div class="placeholder-container">
-                        <i class="fas fa-exclamation-triangle placeholder-icon text-danger"></i>
-                        <p class="text-danger">Error generating segmentation mask. Please try again.</p>
-                    </div>`;
+                
+                if (data.status === 'success') {
+                    // Display the segmentation mask
+                    elements.maskContainer.innerHTML = `
+                        <img src="${data.mask_path}?t=${new Date().getTime()}" 
+                             alt="Segmentation mask" class="mask-image" id="mask-image">
+                    `;
+                    
+                    // Add hover functionality to the mask
+                    const maskImage = document.getElementById('mask-image');
+                    if (maskImage) {
+                        addMaskHoverFunctionality(maskImage);
+                    }
+                    
+                    // Now get the land proportions
+                    getLandProportions(state.currentImagePath);
+                } else {
+                    elements.maskContainer.innerHTML = createPlaceholder(
+                        'exclamation-triangle',
+                        data.message || 'Error generating segmentation mask',
+                        true
+                    );
+                }
+            })
+            .catch(error => {
+                hideLoading();
+                elements.maskContainer.innerHTML = createPlaceholder(
+                    'exclamation-triangle',
+                    'Error analyzing image. Please try again.',
+                    true
+                );
+                console.error("Analysis error:", error);
             });
+    }
+    
+    function getPixelColor(img, x, y) {
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        context.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight);
+        
+        try {
+            const pixelData = context.getImageData(x, y, 1, 1).data;
+            return {
+                r: pixelData[0],
+                g: pixelData[1],
+                b: pixelData[2]
+            };
+        } catch (error) {
+            console.error("Error getting pixel color:", error);
+            return { r: 0, g: 0, b: 0 };
+        }
+    }
+    
+    function getLandTypeFromColor(color) {
+        // Define color ranges for different land types
+        const landTypes = [
+            { name: 'Forest', color: { r: 0, g: 255, b: 0 } },
+            { name: 'Water', color: { r: 0, g: 0, b: 255 } },
+            { name: 'Urban', color: { r: 255, g: 255, b: 255 } },
+            { name: 'Agriculture', color: { r: 255, g: 255, b: 0 } },
+            { name: 'Barren', color: { r: 128, g: 128, b: 128 } },
+            { name: 'Wetland', color: { r: 0, g: 255, b: 255 } },
+            { name: 'Shrubland', color: { r: 255, g: 0, b: 255 } }
+        ];
+        
+        // Find the closest color match
+        let closestType = 'Unknown';
+        let minDistance = Infinity;
+        
+        landTypes.forEach(type => {
+            const distance = colorDistance(color, type.color);
+            if (distance < minDistance) {
+                minDistance = distance;
+                closestType = type.name;
+            }
+        });
+        
+        return closestType;
+    }
+    
+    function colorDistance(color1, color2) {
+        // Calculate Euclidean distance between two colors
+        return Math.sqrt(
+            Math.pow(color1.r - color2.r, 2) +
+            Math.pow(color1.g - color2.g, 2) +
+            Math.pow(color1.b - color2.b, 2)
+        );
     }
     
     function getLandProportions(imagePath) {
@@ -545,46 +411,56 @@ document.addEventListener('DOMContentLoaded', function() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ image_path: imagePath })
         })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Server responded with status: ${response.status}`);
+                }
+                return response.json();
+            })
             .then(data => {
-                hideLoading();
-                
                 if (data.status === 'success' && data.proportions) {
-                    displayProportionsChart(data.proportions);
+                    displayProportions(data.proportions);
+                } else {
+                    console.error("Error getting land proportions:", data);
                 }
             })
-            .catch(() => {
-                hideLoading();
+            .catch(error => {
+                console.error("Land proportions error:", error);
             });
     }
     
-    function displayProportionsChart(proportions) {
-        // Destroy existing chart if it exists
+    function createProportionsChart(proportions) {
+        const ctx = document.getElementById('proportions-chart').getContext('2d');
+        
+        // Destroy previous chart if it exists
         if (state.proportionsChart) {
             state.proportionsChart.destroy();
         }
         
-        const ctx = document.getElementById('proportions-chart').getContext('2d');
-        
+        // Prepare data for chart
         const labels = Object.keys(proportions);
-        const values = Object.values(proportions);
+        const data = Object.values(proportions);
         
-        const backgroundColors = [
-            '#1a9641', // Vegetation
-            '#3288bd', // Water
-            '#d73027', // Buildings
-            '#f1b6da', // Roads
-            '#fee08b', // Bareland
-            '#66c2a5', // Other
-        ];
+        // Define colors for each land type
+        const colors = {
+            'Forest': 'rgba(0, 128, 0, 0.7)',
+            'Water': 'rgba(0, 0, 255, 0.7)',
+            'Urban': 'rgba(128, 128, 128, 0.7)',
+            'Agriculture': 'rgba(255, 215, 0, 0.7)',
+            'Barren': 'rgba(165, 42, 42, 0.7)',
+            'Wetland': 'rgba(0, 255, 255, 0.7)',
+            'Shrubland': 'rgba(255, 0, 255, 0.7)'
+        };
         
+        // Create chart
         state.proportionsChart = new Chart(ctx, {
-            type: 'pie',
+            type: 'doughnut',
             data: {
                 labels: labels,
                 datasets: [{
-                    data: values,
-                    backgroundColor: backgroundColors.slice(0, labels.length),
+                    data: data,
+                    backgroundColor: labels.map(label => colors[label] || 'rgba(128, 128, 128, 0.7)'),
+                    borderColor: labels.map(label => colors[label]?.replace('0.7', '1') || 'rgba(128, 128, 128, 1)'),
                     borderWidth: 1
                 }]
             },
@@ -592,14 +468,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 responsive: true,
                 plugins: {
                     legend: {
-                        position: 'bottom',
+                        position: 'right',
+                        labels: {
+                            font: {
+                                size: 12
+                            }
+                        }
                     },
                     tooltip: {
                         callbacks: {
                             label: function(context) {
                                 const label = context.label || '';
                                 const value = context.raw || 0;
-                                return `${label}: ${value.toFixed(1)}%`;
+                                return `${label}: ${(value * 100).toFixed(1)}%`;
                             }
                         }
                     }
@@ -608,122 +489,206 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
+    function updateLocationDisplay(lat, lng) {
+        // Update the location display with coordinates
+        if (elements.locationDisplay) {
+            elements.locationDisplay.textContent = 'Selected Location';
+        }
+        
+        if (elements.coordsDisplay) {
+            elements.coordsDisplay.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+        }
+        
+        // Try to get a readable address for this location
+        fetch(`/reverse-geocode?lat=${lat}&lng=${lng}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success' && data.address) {
+                    if (elements.locationDisplay) {
+                        elements.locationDisplay.textContent = data.address;
+                    }
+                }
+            })
+            .catch(error => {
+                console.error("Error in reverse geocoding:", error);
+            });
+    }
+    
+    function setMapMarker(lat, lng) {
+        // If we already have a marker, update its position
+        if (state.marker) {
+            state.marker.setLatLng([lat, lng]);
+        } 
+        // Otherwise create a new marker
+        else if (state.map) {
+            state.marker = L.marker([lat, lng]).addTo(state.map);
+        }
+        
+        // Center the map on the marker
+        if (state.map) {
+            state.map.setView([lat, lng], 15);
+        }
+    }
+    
     function identifySuitableLocations() {
         const purpose = elements.purposeSelect.value;
+        const minArea = elements.minAreaInput.value;
+        
         if (purpose === 'Select purpose...') {
-            alert('Please select a purpose for identification');
+            alert('Please select a purpose');
             return;
         }
         
-        const minArea = elements.minAreaInput.value || 1000;
-        
-        elements.locationsResult.innerHTML = `
-            <div class="placeholder-container">
-                <div class="spinner-border" role="status">
-                    <span class="visually-hidden">Loading...</span>
-                </div>
-                <p class="text-muted mt-3">Identifying suitable locations...</p>
-            </div>`;
+        if (!state.currentImagePath) {
+            alert('Please analyze an image first');
+            return;
+        }
         
         showLoading('Identifying suitable locations...');
         
-        fetch('/identify-suitable-locations', {
+        fetch('/identify-locations', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ purpose, min_area_sqm: minArea })
+            body: JSON.stringify({
+                image_path: state.currentImagePath,
+                purpose: purpose,
+                min_area: minArea
+            })
         })
             .then(response => response.json())
             .then(data => {
                 hideLoading();
                 
-                if (data.status === 'error') {
+                if (data.status === 'success') {
+                    displaySuitableLocations(data.locations, purpose);
+                } else {
                     elements.locationsResult.innerHTML = `
-                        <div class="placeholder-container">
-                            <i class="fas fa-exclamation-circle placeholder-icon text-danger"></i>
-                            <p class="text-danger">${data.message}</p>
-                        </div>`;
-                    return;
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            ${data.message || 'No suitable locations found.'}
+                        </div>
+                    `;
                 }
-                
-                if (!data.suitable_locations || data.suitable_locations.length === 0) {
-                    elements.locationsResult.innerHTML = `
-                        <div class="placeholder-container">
-                            <i class="fas fa-map-pin placeholder-icon text-muted"></i>
-                            <p class="text-muted">No suitable locations found for this purpose.</p>
-                        </div>`;
-                    return;
-                }
-                
-                // Display suitable locations
-                displaySuitableLocations(data.suitable_locations, purpose);
             })
             .catch(() => {
                 hideLoading();
                 elements.locationsResult.innerHTML = `
-                    <div class="placeholder-container">
-                        <i class="fas fa-exclamation-triangle placeholder-icon text-danger"></i>
-                        <p class="text-danger">Error identifying suitable locations. Please try again.</p>
-                    </div>`;
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-circle me-2"></i>
+                        Error identifying suitable locations. Please try again.
+                    </div>
+                `;
             });
     }
     
     function displaySuitableLocations(locations, purpose) {
-        elements.locationsResult.innerHTML = '';
-        
-        const resultsHeader = document.createElement('div');
-        resultsHeader.className = 'results-header mb-3';
-        resultsHeader.innerHTML = `
-            <i class="fas fa-check-circle text-success"></i>
-            <h6 class="mb-0">Found ${locations.length} suitable location${locations.length > 1 ? 's' : ''} for ${purpose.replace('_', ' ')}</h6>
-        `;
-        
-        elements.locationsResult.appendChild(resultsHeader);
-        
-        const locationsContainer = document.createElement('div');
-        locationsContainer.className = 'locations-container';
-        
-        locations.forEach((location, index) => {
-            const card = document.createElement('div');
-            card.className = 'location-card mb-3';
-            
-            card.innerHTML = `
-                <div class="location-header">
-                    <div class="location-number">${index + 1}</div>
-                    <div class="location-title">Location ${String.fromCharCode(65 + index)}</div>
-                </div>
-                <div class="location-body">
-                    <div class="location-stat">
-                        <i class="fas fa-ruler-combined"></i>
-                        <span>Area: ${location.area_sqm.toLocaleString()} sq.m</span>
-                    </div>
-                    <div class="location-stat">
-                        <i class="fas fa-map-marker-alt"></i>
-                        <span>Coordinates: ${location.lat}, ${location.lng}</span>
-                    </div>
-                    <div class="location-stat">
-                        <i class="fas fa-percentage"></i>
-                        <span>Suitability Score: ${location.suitability_score}%</span>
-                    </div>
-                    <button class="btn btn-sm btn-outline-primary mt-2 view-location-btn" 
-                            data-lat="${location.lat}" 
-                            data-lng="${location.lng}">
-                        View on Map
-                    </button>
+        if (!locations || locations.length === 0) {
+            elements.locationsResult.innerHTML = `
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    No suitable locations found for ${purpose.replace('_', ' ')}.
                 </div>
             `;
-            
-            const viewButton = card.querySelector('.view-location-btn');
-            viewButton.addEventListener('click', function() {
-                const lat = this.getAttribute('data-lat');
-                const lng = this.getAttribute('data-lng');
-                setMapMarker(lat, lng);
-                state.map.setView([lat, lng], 15);
-                elements.heroSection.scrollIntoView({ behavior: 'smooth' });
-            });
-            
-            locationsContainer.appendChild(card);
+            return;
+        }
+        
+        let html = `
+            <h5 class="mb-3">Suitable Locations for ${purpose.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}</h5>
+            <div class="row">
+        `;
+        
+        locations.forEach((location, index) => {
+            html += `
+                <div class="col-md-6 mb-3">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h6 class="card-title">Location ${index + 1}</h6>
+                            <p class="card-text">
+                                <strong>Area:</strong> ${location.area} sq.m<br>
+                                <strong>Suitability:</strong> ${location.suitability}%
+                            </p>
+                            <button class="btn btn-sm btn-outline-primary view-location-btn" 
+                                data-lat="${location.center[0]}" 
+                                data-lng="${location.center[1]}">
+                                <i class="fas fa-map-marker-alt me-1"></i> View on Map
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
         });
         
-        elements.locationsResult.appendChild(locationsContainer);
+        html += '</div>';
+        
+        elements.locationsResult.innerHTML = html;
+        
+        // Add event listeners to view location buttons
+        document.querySelectorAll('.view-location-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const lat = parseFloat(this.getAttribute('data-lat'));
+                const lng = parseFloat(this.getAttribute('data-lng'));
+                
+                if (state.map) {
+                    state.map.setView([lat, lng], 18);
+                    
+                    // Add a special marker for this location
+                    const locationMarker = L.marker([lat, lng], {
+                        icon: L.divIcon({
+                            className: 'location-marker',
+                            html: '<i class="fas fa-star"></i>',
+                            iconSize: [30, 30]
+                        })
+                    }).addTo(state.map);
+                    
+                    // Scroll to map
+                    elements.heroSection.scrollIntoView({ behavior: 'smooth' });
+                }
+            });
+        });
     }
+
+    // Add the hover functionality for the mask
+    function addMaskHoverFunctionality(maskImage) {
+        // Create tooltip element
+        const tooltip = document.createElement('div');
+        tooltip.className = 'mask-tooltip';
+        tooltip.style.display = 'none';
+        maskImage.parentNode.appendChild(tooltip);
+        
+        // Color mapping for land types
+        const landTypeColors = {
+            'urban': 'Urban Area',
+            'agriculture': 'Agricultural Land',
+            'forest': 'Forest',
+            'water': 'Water Body',
+            'barren': 'Barren Land'
+        };
+        
+        // Add event listeners
+        maskImage.addEventListener('mousemove', function(e) {
+            const rect = this.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            // Position the tooltip
+            tooltip.style.left = `${e.clientX}px`;
+            tooltip.style.top = `${e.clientY - 30}px`;
+            tooltip.style.display = 'block';
+            
+            // For now, just show a placeholder message
+            // In a real implementation, we would need to get the pixel color
+            // and map it to a land type
+            tooltip.textContent = 'Hover over different areas to see land types';
+        });
+        
+        maskImage.addEventListener('mouseleave', function() {
+            tooltip.style.display = 'none';
+        });
+    }
+
+    // Make sure these functions have access to the elements and state objects
+    window.elements = elements;
+    window.state = state;
+    
+    console.log("DOM fully loaded and event listeners attached");
 });
