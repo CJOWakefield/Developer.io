@@ -198,80 +198,87 @@ class RegionPredictor:
             list(executor.map(save_prediction, predictions.items()))
 
     def get_land_proportions(self, mask: np.ndarray) -> Dict[str, float]:
-            """
-            Calculate land type proportions from a segmentation mask.
-            
-            Args:
-                mask: Segmentation mask
-            
-            """
-            
-            class_labels = {0: 'urban', 
-                            1: 'agriculture', 
-                            2: 'rangeland', 
-                            3: 'forest', 
-                            4: 'water', 
-                            5: 'barren', 
-                            6: 'unknown'}
-            try:
-                # Handle different input types
-                if isinstance(mask, dict) and 'raw_mask' in mask:
-                    # Already have raw class indices
-                    raw_mask = mask['raw_mask']
-                elif len(mask.shape) == 2:
-                    # Already have raw class indices 
-                    raw_mask = mask
-                elif len(mask.shape) == 3 and mask.shape[2] == 3:
-                    # Create a raw mask array from colored mask
-                    if torch.is_tensor(mask):
-                        # If it's a PyTorch tensor, handle accordingly
-                        raw_mask = torch.zeros((mask.shape[0], mask.shape[1]), dtype=torch.long, device=mask.device)
-                        for class_idx, color in self.classes.items():
-                            color_tensor = torch.tensor(color, device=mask.device).view(1, 1, 3)
-                            raw_mask[torch.all(mask == color_tensor, dim=2)] = list(self.classes.keys()).index(class_idx)
-                        raw_mask = raw_mask.cpu().numpy()
-                    else:
-                        # Handle numpy array
-                        raw_mask = np.zeros(mask.shape[:2], dtype=np.uint8)
-                        for class_idx, color in self.classes.items():
-                            color_array = np.array(color).reshape(1, 1, 3)
-                            raw_mask[np.all(mask == color_array, axis=2)] = list(self.classes.keys()).index(class_idx)
-                elif hasattr(self, 'raw_mask') and self.raw_mask is not None:
-                    raw_mask = self.raw_mask
+        """
+        Calculate land type proportions from a segmentation mask.
+        
+        Args:
+            mask: Segmentation mask
+        
+        Returns:
+            Dictionary with land type proportions
+        """
+        
+        class_labels = {
+            0: 'urban',         # Cyan
+            1: 'agriculture',   # Yellow
+            2: 'rangeland',     # Magenta
+            3: 'forest',        # Green
+            4: 'water',         # Blue
+            5: 'barren',        # White
+            6: 'unknown'        # Black
+            }
+        
+        class_colors = {
+            0: (0, 255, 255),    # urban land - Cyan
+            1: (255, 255, 0),    # agricultural land - Yellow
+            2: (255, 0, 255),    # rangeland - Magenta
+            3: (0, 255, 0),      # forest land - Green
+            4: (0, 0, 255),      # water - Dark blue
+            5: (255, 255, 255),  # barren land - White
+            6: (0, 0, 0)         # unknown - Black
+            }
+
+        try:
+            if isinstance(mask, dict) and 'raw_mask' in mask:
+                raw_mask = mask['raw_mask']
+            elif len(mask.shape) == 2:
+                raw_mask = mask
+            elif len(mask.shape) == 3 and mask.shape[2] == 3:
+                if torch.is_tensor(mask):
+                    raw_mask = torch.zeros((mask.shape[0], mask.shape[1]), dtype=torch.long, device=mask.device)
+                    for class_idx, color in class_colors.items():
+                        color_tensor = torch.tensor(color, device=mask.device).view(1, 1, 3)
+                        raw_mask[torch.all(mask == color_tensor, dim=2)] = class_idx
+                    raw_mask = raw_mask.cpu().numpy()
                 else:
-                    # Handle direct prediction from model output
-                    with torch.no_grad():
-                        if hasattr(self, 'model') and torch.is_tensor(mask):
-                            prediction = self.model(mask)['segmentation']
-                            raw_mask = torch.argmax(prediction, dim=1)[0].cpu().numpy()
-                        else:
-                            raise ValueError("Invalid mask format")
+                    raw_mask = np.zeros(mask.shape[:2], dtype=np.uint8)
+                    for class_idx, color in class_colors.items():
+                        color_array = np.array(color).reshape(1, 1, 3)
+                        raw_mask[np.all(mask == color_array, axis=2)] = class_idx
+            elif hasattr(self, 'raw_mask') and self.raw_mask is not None:
+                raw_mask = self.raw_mask
+            else:
+                with torch.no_grad():
+                    if hasattr(self, 'model') and torch.is_tensor(mask):
+                        prediction = self.model(mask)['segmentation']
+                        raw_mask = torch.argmax(prediction, dim=1)[0].cpu().numpy()
+                    else:
+                        raise ValueError("Invalid mask format")
+            
+            total_pixels = raw_mask.size
+            proportions = {}
+            for class_idx, label in class_labels.items():
+                pixels_in_class = np.sum(raw_mask == class_idx)
+                proportion = float(pixels_in_class) / total_pixels
+                proportions[label] = round(proportion, 4)
                 
-                # Calculate proportions
-                total_pixels = raw_mask.size
-                proportions = {}
-                for class_idx, label in class_labels.items():
-                    pixels_in_class = np.sum(raw_mask == class_idx)
-                    proportion = float(pixels_in_class) / total_pixels
-                    proportions[label] = round(proportion, 4)
-                    
-                proportions['vegetated'] = proportions['forest'] + proportions['rangeland'] + proportions['agriculture']
-                proportions['developed'] = proportions['urban'] + proportions['barren']
-                return proportions
-                    
-            except Exception as e:
-                print(f"Error in get_land_proportions: {str(e)}")
-                return {
-                    'urban': 0,
-                    'agriculture': 0,
-                    'rangeland': 0,
-                    'forest': 0,
-                    'water': 0,
-                    'barren': 0,
-                    'unknown': 1,
-                    'vegetated': 0,
-                    'developed': 0
-                }
+            proportions['vegetated'] = proportions['forest'] + proportions['rangeland'] + proportions['agriculture']
+            proportions['developed'] = proportions['urban'] + proportions['barren']
+            return proportions
+                
+        except Exception as e:
+            print(f"Error in get_land_proportions: {str(e)}")
+            return {
+                'urban': 0,
+                'agriculture': 0,
+                'rangeland': 0,
+                'forest': 0,
+                'water': 0,
+                'barren': 0,
+                'unknown': 1,
+                'vegetated': 0,
+                'developed': 0
+            }
     
     def identify_locations(self, mask: np.ndarray, purpose: str, min_area_sqm: float = 1000) -> List[Dict]:
         """

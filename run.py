@@ -31,10 +31,9 @@ from app.app import app
 if __name__ == '__main__':
     debug = os.environ.get('FLASK_DEBUG', 'False').lower() in ('true', '1', 't')
     port = int(os.environ.get('PORT', 5000))
-    logger.info(f"Starting Satellite Imagery Analysis web application on port {port}")
+    logger.info(f"Starting Satellite Imagery Analysis web application on port {port}")  
     logger.info(f"Debug mode: {debug}")
     try:
         app.run(host='0.0.0.0', port=port, debug=debug)
     except Exception as e:
         logger.error(f"Error starting the application: {e}")
-        sys.exit(1)
