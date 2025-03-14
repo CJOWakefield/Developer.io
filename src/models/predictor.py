@@ -263,7 +263,8 @@ class RegionPredictor:
                 proportions[label] = round(proportion, 4)
                 
             proportions['vegetated'] = proportions['forest'] + proportions['rangeland'] + proportions['agriculture']
-            proportions['developed'] = proportions['urban'] + proportions['barren']
+            proportions['developed'] = proportions['urban']
+            proportions['unbuildable'] = proportions['water'] + proportions['unknown']
             return proportions
                 
         except Exception as e:
@@ -277,7 +278,8 @@ class RegionPredictor:
                 'barren': 0,
                 'unknown': 1,
                 'vegetated': 0,
-                'developed': 0
+                'developed': 0,
+                'unbuildable': 0
             }
     
     def identify_locations(self, mask: np.ndarray, purpose: str, min_area_sqm: float = 1000) -> List[Dict]:
