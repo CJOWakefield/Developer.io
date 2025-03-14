@@ -110,11 +110,13 @@ document.addEventListener('DOMContentLoaded', function() {
         L.control.attribution({
             position: 'bottomright',
             prefix: false
-        }).addAttribution('© OpenStreetMap contributors').addTo(state.map);
+        }).addAttribution('© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors').addTo(state.map);
         
-        // Add tile layer
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19
+        // Add tile layer - using Stamen Terrain as a fallback
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap contributors',
+            errorTileUrl: 'https://stamen-tiles.a.ssl.fastly.net/terrain/{z}/{x}/{y}.jpg'
         }).addTo(state.map);
         
         // Add click event to map
@@ -140,7 +142,12 @@ document.addEventListener('DOMContentLoaded', function() {
         showLoading('Searching for location...');
         
         fetch(`/search-location?query=${encodeURIComponent(query)}`)
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Server responded with status: ${response.status}`);
+                }
+                return response.json();
+            })
             .then(data => {
                 hideLoading();
                 
@@ -164,8 +171,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     `;
                 }
             })
-            .catch(() => {
+            .catch(error => {
                 hideLoading();
+                console.error("Search error:", error);
                 elements.locationSuggestions.innerHTML = `
                     <div class="list-group-item list-group-item-action text-danger">
                         <i class="fas fa-exclamation-circle me-2"></i>
@@ -484,30 +492,50 @@ document.addEventListener('DOMContentLoaded', function() {
             state.proportionsChart.destroy();
         }
         
-        // Prepare data for chart
-        const labels = Object.keys(proportions);
-        const data = Object.values(proportions);
+        // Filter to include only the specific segmentation mask classes
+        const allowedClasses = ['agriculture', 'barren', 'forest', 'rangeland', 'unknown', 'urban', 'water'];
+        const filteredProportions = {};
         
-        // Define colors for each land type
+        // Convert to lowercase and filter
+        Object.entries(proportions).forEach(([key, value]) => {
+            const keyLower = key.toLowerCase();
+            if (allowedClasses.includes(keyLower)) {
+                filteredProportions[key] = value;
+            }
+        });
+        
+        console.log("Filtered proportions for land type distribution:", filteredProportions);
+        
+        // Prepare data for chart
+        const labels = Object.keys(filteredProportions);
+        const data = Object.values(filteredProportions);
+        
+        // Define colors for each land type - using more distinct colors
         const colors = {
-            'Forest': 'rgba(0, 128, 0, 0.7)',
-            'Water': 'rgba(0, 0, 255, 0.7)',
-            'Urban': 'rgba(128, 128, 128, 0.7)',
-            'Agriculture': 'rgba(255, 215, 0, 0.7)',
-            'Barren': 'rgba(165, 42, 42, 0.7)',
-            'Wetland': 'rgba(0, 255, 255, 0.7)',
-            'Shrubland': 'rgba(255, 0, 255, 0.7)'
+            'agriculture': 'rgba(218, 165, 32, 0.8)', // Goldenrod
+            'barren': 'rgba(160, 82, 45, 0.8)',      // Sienna
+            'forest': 'rgba(34, 139, 34, 0.8)',      // Forest green
+            'rangeland': 'rgba(107, 142, 35, 0.8)',  // Olive drab
+            'unknown': 'rgba(128, 128, 128, 0.8)',   // Gray
+            'urban': 'rgba(169, 169, 169, 0.8)',     // Dark gray
+            'water': 'rgba(30, 144, 255, 0.8)',      // Dodger blue
         };
         
-        // Create chart
+        // Create chart with improved colors
         state.proportionsChart = new Chart(ctx, {
             type: 'doughnut',
             data: {
                 labels: labels,
                 datasets: [{
                     data: data,
-                    backgroundColor: labels.map(label => colors[label] || 'rgba(128, 128, 128, 0.7)'),
-                    borderColor: labels.map(label => colors[label]?.replace('0.7', '1') || 'rgba(128, 128, 128, 1)'),
+                    backgroundColor: labels.map(label => {
+                        const key = label.toLowerCase();
+                        return colors[key] || 'rgba(128, 128, 128, 0.8)';
+                    }),
+                    borderColor: labels.map(label => {
+                        const key = label.toLowerCase();
+                        return colors[key]?.replace('0.8', '1') || 'rgba(128, 128, 128, 1)';
+                    }),
                     borderWidth: 1
                 }]
             },
@@ -530,10 +558,151 @@ document.addEventListener('DOMContentLoaded', function() {
                                 return `${label}: ${(value * 100).toFixed(1)}%`;
                             }
                         }
+                    },
+                    title: {
+                        display: true,
+                        text: 'Land Type Distribution',
+                        font: {
+                            size: 16
+                        }
                     }
                 }
             }
         });
+        
+        // Create a second chart for urban density (vegetation vs developed)
+        createUrbanDensityChart(proportions);
+    }
+    
+    function createUrbanDensityChart(proportions) {
+        try {
+            const canvas = document.getElementById('derived-proportions-chart');
+            if (!canvas) {
+                console.error("Cannot find derived-proportions-chart canvas element");
+                return;
+            }
+            
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+                console.error("Cannot get 2d context from derived-proportions-chart canvas");
+                return;
+            }
+            
+            // Destroy previous chart if it exists
+            if (state.derivedProportionsChart) {
+                state.derivedProportionsChart.destroy();
+            }
+            
+            // Calculate the three categories: Vegetated, Developed, and Unbuildable
+            let vegetated = 0;
+            let developed = 0;
+            let unbuildable = 0;
+            
+            // Calculate categories from proportions
+            Object.entries(proportions).forEach(([key, value]) => {
+                const keyLower = key.toLowerCase();
+                
+                // Vegetated areas
+                if (keyLower.includes('forest') || keyLower.includes('shrub') || 
+                    keyLower.includes('agriculture') || keyLower.includes('vegetat') || 
+                    keyLower.includes('rangeland')) {
+                    vegetated += value;
+                }
+                // Developed areas
+                else if (keyLower.includes('urban') || keyLower.includes('develop') || 
+                         keyLower.includes('built')) {
+                    developed += value;
+                }
+                // Unbuildable areas (water, wetlands, etc.)
+                else if (keyLower.includes('water') || keyLower.includes('wetland') || 
+                         keyLower.includes('barren')) {
+                    unbuildable += value;
+                }
+                // Unknown areas - distribute proportionally or add to unbuildable
+                else if (keyLower.includes('unknown')) {
+                    unbuildable += value;
+                }
+            });
+            
+            // Create land use categories data
+            const landUseCategories = {
+                'Vegetated': vegetated,
+                'Developed': developed,
+                'Unbuildable': unbuildable
+            };
+            
+            console.log("Land use categories:", landUseCategories);
+            
+            // Check if we have any data
+            const totalValue = vegetated + developed + unbuildable;
+            if (totalValue <= 0) {
+                console.error("No valid data for land use categories chart");
+                return;
+            }
+            
+            // Normalize to ensure they sum to 100%
+            const normalizedData = {
+                'Vegetated': vegetated / totalValue,
+                'Developed': developed / totalValue,
+                'Unbuildable': unbuildable / totalValue
+            };
+            
+            // Prepare data for chart
+            const labels = Object.keys(normalizedData);
+            const data = Object.values(normalizedData);
+            
+            // Define colors for land use categories
+            const colors = {
+                'Vegetated': 'rgba(76, 175, 80, 0.7)',    // Green
+                'Developed': 'rgba(158, 158, 158, 0.7)',  // Gray
+                'Unbuildable': 'rgba(33, 150, 243, 0.7)'  // Blue
+            };
+            
+            // Create chart
+            state.derivedProportionsChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: labels.map(label => colors[label] || 'rgba(128, 128, 128, 0.7)'),
+                        borderColor: labels.map(label => colors[label]?.replace('0.7', '1') || 'rgba(128, 128, 128, 1)'),
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: {
+                                font: {
+                                    size: 12
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const label = context.label || '';
+                                    const value = context.raw || 0;
+                                    return `${label}: ${(value * 100).toFixed(1)}%`;
+                                }
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: 'Land Use Categories',
+                            font: {
+                                size: 16
+                            }
+                        }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error("Error creating land use categories chart:", error);
+        }
     }
     
     function displayProportions(proportions) {
@@ -707,36 +876,66 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Add the hover functionality for the mask
     function addMaskHoverFunctionality(maskImage) {
-        // Create tooltip element
-        const tooltip = document.createElement('div');
-        tooltip.className = 'mask-tooltip';
-        tooltip.style.display = 'none';
-        maskImage.parentNode.appendChild(tooltip);
+        // Create tooltip element if it doesn't exist
+        let tooltip = document.querySelector('.mask-tooltip');
+        if (!tooltip) {
+            tooltip = document.createElement('div');
+            tooltip.className = 'mask-tooltip';
+            tooltip.style.display = 'none';
+            document.body.appendChild(tooltip);
+        }
         
         // Color mapping for land types
         const landTypeColors = {
-            'urban': 'Urban Area',
-            'agriculture': 'Agricultural Land',
-            'forest': 'Forest',
-            'water': 'Water Body',
-            'barren': 'Barren Land'
+            // RGB values for different land types
+            '0,255,0': 'Forest',
+            '0,0,255': 'Water',
+            '255,255,255': 'Urban',
+            '255,255,0': 'Agriculture',
+            '128,128,128': 'Barren',
+            '0,255,255': 'Wetland',
+            '255,0,255': 'Shrubland',
+            '107,142,35': 'Rangeland',
+            '0,0,0': 'Unknown'
+        };
+        
+        // Create an offscreen canvas for pixel analysis
+        const offscreenCanvas = document.createElement('canvas');
+        const offscreenCtx = offscreenCanvas.getContext('2d');
+        
+        // Wait for the image to load
+        maskImage.onload = function() {
+            offscreenCanvas.width = maskImage.naturalWidth;
+            offscreenCanvas.height = maskImage.naturalHeight;
+            offscreenCtx.drawImage(maskImage, 0, 0);
         };
         
         // Add event listeners
         maskImage.addEventListener('mousemove', function(e) {
             const rect = this.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
+            const x = Math.floor((e.clientX - rect.left) * (this.naturalWidth / rect.width));
+            const y = Math.floor((e.clientY - rect.top) * (this.naturalHeight / rect.height));
             
-            // Position the tooltip
-            tooltip.style.left = `${e.clientX}px`;
-            tooltip.style.top = `${e.clientY - 30}px`;
-            tooltip.style.display = 'block';
-            
-            // For now, just show a placeholder message
-            // In a real implementation, we would need to get the pixel color
-            // and map it to a land type
-            tooltip.textContent = 'Hover over different areas to see land types';
+            try {
+                // Get pixel color at cursor position
+                const pixelData = offscreenCtx.getImageData(x, y, 1, 1).data;
+                const colorKey = `${pixelData[0]},${pixelData[1]},${pixelData[2]}`;
+                
+                // Get land type from color
+                let landType = landTypeColors[colorKey] || 'Unknown';
+                
+                // Position the tooltip
+                tooltip.style.left = `${e.clientX + 10}px`;
+                tooltip.style.top = `${e.clientY - 30}px`;
+                tooltip.style.display = 'block';
+                tooltip.textContent = landType;
+                
+                // Add color indicator to tooltip
+                tooltip.style.borderLeft = `4px solid rgb(${colorKey})`;
+            } catch (error) {
+                console.error("Error getting pixel data:", error);
+                tooltip.textContent = "Error reading land type";
+            }
         });
         
         maskImage.addEventListener('mouseleave', function() {
