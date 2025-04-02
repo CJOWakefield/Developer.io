@@ -42,23 +42,6 @@ transformer = transforms.Compose([transforms.ToTensor(),
 
 '''
 
-class SpatialAttention(nn.Module):
-    """
-    Spatial attention module to help focus on larger spatial regions.
-    """
-    def __init__(self, kernel_size=7):
-        super().__init__()
-        self.conv = nn.Conv2d(2, 1, kernel_size=kernel_size, padding=kernel_size//2)
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        # Generate attention map
-        avg_out = torch.mean(x, dim=1, keepdim=True)
-        max_out, _ = torch.max(x, dim=1, keepdim=True)
-        x_cat = torch.cat([avg_out, max_out], dim=1)
-        attention = self.sigmoid(self.conv(x_cat))
-        return x * attention
-
 class ResidualBlock(nn.Module):
     """
     Residual block with two convolutional layers and a skip connection.
@@ -81,18 +64,13 @@ class ResidualBlock(nn.Module):
             nn.BatchNorm2d(output_dim),
             nn.LeakyReLU(negative_slope=0.1, inplace=True))
 
-        # Add spatial attention
-        self.attention = SpatialAttention()
-
         # Init skip
         self.skip = (nn.Sequential(nn.Conv2d(input_dim, output_dim, kernel_size=1, stride=1, padding=0, bias=False),
                                    nn.BatchNorm2d(output_dim),
                                    nn.LeakyReLU(negative_slope=0.1, inplace=True)) if input_dim != output_dim else nn.Identity())
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = self.conv(x)
-        out = self.attention(out)  # Apply spatial attention
-        return out + self.skip(x)
+        return self.conv(x) + self.skip(x)
 
 class UNetConfig():
     """
@@ -485,34 +463,6 @@ class FocalLoss(nn.Module):
         else:
             return focal_loss.sum()
 
-class SpatialConsistencyLoss(nn.Module):
-    """
-    Loss function that encourages spatial consistency in predictions.
-    """
-    def __init__(self, weight=0.1):
-        super().__init__()
-        self.weight = weight
-        self.focal_loss = FocalLoss()
-
-    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        # Calculate standard focal loss
-        focal_loss = self.focal_loss(input, target)
-        
-        # Calculate spatial consistency loss
-        pred = F.softmax(input, dim=1)
-        spatial_loss = 0
-        
-        # Compare each pixel with its 8 neighbors
-        for i in range(1, pred.shape[2]-1):
-            for j in range(1, pred.shape[3]-1):
-                center = pred[:, :, i, j]
-                neighbors = pred[:, :, i-1:i+2, j-1:j+2].reshape(pred.shape[0], pred.shape[1], -1)
-                spatial_loss += F.mse_loss(center.unsqueeze(-1).expand_as(neighbors), neighbors)
-        
-        spatial_loss = spatial_loss / ((pred.shape[2]-2) * (pred.shape[3]-2))
-        
-        return focal_loss + self.weight * spatial_loss
-
 def train_model(epochs: int = 5) -> dict:
     """
     Convenience function to train a model with default settings.
@@ -531,7 +481,7 @@ def train_model(epochs: int = 5) -> dict:
         model=model, 
         data=training_data, 
         optimiser=optimiser, 
-        loss=SpatialConsistencyLoss(weight=0.1),  # Use the new spatial consistency loss
+        loss=FocalLoss(gamma=2.0), 
         epochs=epochs, 
         batch_size=16
     )
