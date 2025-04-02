@@ -77,6 +77,7 @@ class RegionPredictor:
             versions = [d for d in os.listdir(model_directory) if os.path.isdir(os.path.join(model_directory, d)) and d.startswith('v_')]
             if not versions: raise ValueError('No models available.')
             self.model_version = sorted(versions, key=lambda x: (int(x.split('_')[1]), int(x.split('_')[2])))[-1]
+        else: self.model_version = model_version
         self.model = UNet().to(self.device)
         self.model.load_state_dict(torch.load(os.path.join(self.base_dir, 'data', 'models', self.model_version, 'model.pt'), weights_only=True)['model_state_dict'])
         self.model.eval()
@@ -377,7 +378,11 @@ class RegionPredictor:
         
         fig, axes = plt.subplots(1, 3, figsize=(18, 6))
         
-        axes[0].imshow(image_tensor.cpu().numpy())
+        # axes[0].imshow(image_tensor.cpu().numpy())
+        # Load the original image for display instead of using the tensor
+        original_image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+        axes[0].imshow(original_image)
+        #
         axes[0].set_title('Original Image')
         axes[0].axis('off')
         
@@ -474,6 +479,6 @@ if __name__ == '__main__':
     # predictor = RegionPredictor()
     # res = predictor.predict_from_file('data/downloaded/chicago_41.876_-87.624_2.0km_500m/100002_sat.jpg')
     # visualize_prediction_results(res)
-    predictor = RegionPredictor()
+    predictor = RegionPredictor(model_version='v_0_07')
     predictor.visualise('data/downloaded/aragon_41.379_-0.764_2.0km_500m/100007_sat.jpg')
     # visualise_pred(data_path='data/downloaded/aragon_41.379_-0.764_2.0km_500m', n_samples=1, image_ids=100007)
