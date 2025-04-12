@@ -13,16 +13,19 @@ from google.cloud import storage
 from io import BytesIO
 from typing import Union, List, Optional, Dict
 import sys
+from torchvision import transforms
 
 base_directory = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(base_directory)
 train_directory = os.path.join(base_directory, 'data', 'train')
 model_directory = os.path.join(base_directory, 'data', 'models')
 
-from src.models.trainer import transformer, UNet
-
+# Load configuration
 with open(os.path.join(base_directory, 'configs', 'default_config.yaml'), 'r') as file:
     config = yaml.safe_load(file)
+
+# Import only the necessary components from trainer
+from src.models.trainer import transformer, UNet, UNetConfig
 
 ''' ----- Predictor file summary -----
 
@@ -263,6 +266,7 @@ class RegionPredictor:
                 proportion = float(pixels_in_class) / total_pixels
                 proportions[label] = round(proportion, 4)
                 
+            # Add derived categories for visualization only - not part of model output
             proportions['vegetated'] = proportions['forest'] + proportions['rangeland'] + proportions['agriculture']
             proportions['developed'] = proportions['urban']
             proportions['unbuildable'] = proportions['water'] + proportions['unknown']
@@ -479,6 +483,6 @@ if __name__ == '__main__':
     # predictor = RegionPredictor()
     # res = predictor.predict_from_file('data/downloaded/chicago_41.876_-87.624_2.0km_500m/100002_sat.jpg')
     # visualize_prediction_results(res)
-    predictor = RegionPredictor(model_version='v_0_07')
-    predictor.visualise('data/downloaded/aragon_41.379_-0.764_2.0km_500m/100007_sat.jpg')
+    predictor = RegionPredictor(model_version='v_3_01')
+    predictor.visualise('data/train/119_sat.jpg')
     # visualise_pred(data_path='data/downloaded/aragon_41.379_-0.764_2.0km_500m', n_samples=1, image_ids=100007)
