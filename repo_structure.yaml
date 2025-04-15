@@ -1,0 +1,227 @@
+  - path: /cache
+    type: directory
+    contents:
+  - path: /api
+    type: directory
+    contents:
+    - path: /api/__init__.py
+      type: file
+    - path: /api/cloud_storage_client.py
+      type: file
+    - path: /api/__pycache__
+      type: directory
+      contents:
+      - path: /api/__pycache__/client.cpython-312.pyc
+        type: file
+      - path: /api/__pycache__/main.cpython-312.pyc
+        type: file
+      - path: /api/__pycache__/__init__.cpython-312.pyc
+        type: file
+      - path: /api/__pycache__/cloud_storage_client.cpython-312.pyc
+        type: file
+    - path: /api/cloud_data_management.py
+      type: file
+  - path: /app
+    type: directory
+    contents:
+    - path: /app/__init__.py
+      type: file
+    - path: /app/functions.py
+      type: file
+    - path: /app/templates
+      type: directory
+      contents:
+      - path: /app/templates/index.html
+        type: file
+    - path: /app/routes
+      type: directory
+      contents:
+      - path: /app/routes/main.py
+        type: file
+      - path: /app/routes/__pycache__
+        type: directory
+        contents:
+        - path: /app/routes/__pycache__/main.cpython-312.pyc
+          type: file
+    - path: /app/app.py
+      type: file
+    - path: /app/static
+      type: directory
+      contents:
+      - path: /app/static/css
+        type: directory
+        contents:
+        - path: /app/static/css/style.css
+          type: file
+      - path: /app/static/js
+        type: directory
+        contents:
+        - path: /app/static/js/main.js
+          type: file
+    - path: /app/__pycache__
+      type: directory
+      contents:
+      - path: /app/__pycache__/functions.cpython-312.pyc
+        type: file
+      - path: /app/__pycache__/__init__.cpython-312.pyc
+        type: file
+  - path: /run.py
+    type: file
+  - path: /test_image.jpg
+    type: file
+  - path: /src
+    type: directory
+    contents:
+    - path: /src/__init__.py
+      type: file
+    - path: /src/data
+      type: directory
+      contents:
+      - path: /src/data/__init__.py
+        type: file
+      - path: /src/data/augment.py
+        type: file
+      - path: /src/data/temp.py
+        type: file
+      - path: /src/data/loader.py
+        type: file
+      - path: /src/data/downloader.py
+        type: file
+      - path: /src/data/__pycache__
+        type: directory
+        contents:
+        - path: /src/data/__pycache__/api_downloader.cpython-310.pyc
+          type: file
+        - path: /src/data/__pycache__/downloader.cpython-312.pyc
+          type: file
+        - path: /src/data/__pycache__/__init__.cpython-310.pyc
+          type: file
+        - path: /src/data/__pycache__/augment.cpython-310.pyc
+          type: file
+        - path: /src/data/__pycache__/loader.cpython-310.pyc
+          type: file
+        - path: /src/data/__pycache__/__init__.cpython-312.pyc
+          type: file
+        - path: /src/data/__pycache__/augment.cpython-312.pyc
+          type: file
+        - path: /src/data/__pycache__/loader.cpython-312.pyc
+          type: file
+    - path: /src/visualisation
+      type: directory
+      contents:
+      - path: /src/visualisation/__init__.py
+        type: file
+      - path: /src/visualisation/visualiser.py
+        type: file
+    - path: /src/models
+      type: directory
+      contents:
+      - path: /src/models/__init__.py
+        type: file
+      - path: /src/models/trainer.py
+        type: file
+      - path: /src/models/exp_trainer.py
+        type: file
+      - path: /src/models/execute.py
+        type: file
+      - path: /src/models/__pycache__
+        type: directory
+        contents:
+        - path: /src/models/__pycache__/trainer.cpython-310.pyc
+          type: file
+        - path: /src/models/__pycache__/predictor.cpython-310.pyc
+          type: file
+        - path: /src/models/__pycache__/__init__.cpython-310.pyc
+          type: file
+        - path: /src/models/__pycache__/exp_trainer.cpython-312.pyc
+          type: file
+        - path: /src/models/__pycache__/execute.cpython-312.pyc
+          type: file
+      - path: /src/models/predictor.py
+        type: file
+    - path: /src/__pycache__
+      type: directory
+      contents:
+      - path: /src/__pycache__/__init__.cpython-310.pyc
+        type: file
+      - path: /src/__pycache__/__init__.cpython-312.pyc
+        type: file
+  - path: /requirements.txt
+    type: file
+  - path: /tests
+    type: directory
+    contents:
+    - path: /tests/test_downloader.py
+      type: file
+    - path: /tests/test_api.py
+      type: file
+    - path: /tests/test_loader.py
+      type: file
+    - path: /tests/testing
+      type: directory
+      contents:
+  - path: /prev_files
+    type: directory
+    contents:
+    - path: /prev_files/main.py
+      type: file
+    - path: /prev_files/notebooks
+      type: directory
+      contents:
+      - path: /prev_files/notebooks/playground.ipynb
+        type: file
+    - path: /prev_files/model.py
+      type: file
+    - path: /prev_files/augment.py
+      type: file
+    - path: /prev_files/app.py
+      type: file
+    - path: /prev_files/images.py
+      type: file
+  - path: /scripts
+    type: directory
+    contents:
+    - path: /scripts/predict.py
+      type: file
+    - path: /scripts/train.py
+      type: file
+    - path: /scripts/download.py
+      type: file
+    - path: /scripts/__pycache__
+      type: directory
+      contents:
+      - path: /scripts/__pycache__/download.cpython-312.pyc
+        type: file
+  - path: /README.md
+    type: file
+  - path: /run_api.py
+    type: file
+  - path: /configs
+    type: directory
+    contents:
+    - path: /configs/__init__.py
+      type: file
+    - path: /configs/gcp_config.yaml
+      type: file
+    - path: /configs/config.py
+      type: file
+    - path: /configs/default_config.yaml
+      type: file
+    - path: /configs/__pycache__
+      type: directory
+      contents:
+      - path: /configs/__pycache__/config.cpython-312.pyc
+        type: file
+      - path: /configs/__pycache__/__init__.cpython-312.pyc
+        type: file
+  - path: /__pycache__
+    type: directory
+    contents:
+    - path: /__pycache__/images.cpython-310.pyc
+      type: file
+    - path: /__pycache__/model.cpython-310.pyc
+      type: file
+    - path: /__pycache__/config.cpython-310.pyc
+      type: file
+  - path: /setup.py
+    type: file
