@@ -895,9 +895,17 @@ class CombinedLoss(nn.Module):
             weights = [1.0] * len(loss_functions)
         
         if len(weights) != len(loss_functions):
-            raise ValueError(f"Number of weights ({len(weights)}) must match number of loss functions ({len(loss_functions)})")
+            print(f"Warning: Number of weights ({len(weights)}) does not match number of loss functions ({len(loss_functions)}). Adjusting weights.")
+            # Adjust weights to match the number of loss functions
+            if len(weights) < len(loss_functions):
+                # If we have fewer weights than loss functions, pad with 1.0
+                weights = weights + [1.0] * (len(loss_functions) - len(weights))
+            else:
+                # If we have more weights than loss functions, truncate
+                weights = weights[:len(loss_functions)]
         
-        self.weights = weights
+        # Store weights as a tensor to ensure proper indexing
+        self.weights = torch.tensor(weights, dtype=torch.float32)
     
     def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
@@ -945,6 +953,7 @@ class TrainExp:
                  early_stopping_patience: int = 10, checkpoint_dir: str = None,
                  use_amp: bool = True, use_ddp: bool = False, rank: int = 0, world_size: int = 1,
                  gradient_accumulation_steps: int = 4) -> None:
+        
         self.model = model
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -963,6 +972,7 @@ class TrainExp:
         
         self.train_losses = []
         self.val_losses = []
+        self.metrics_history = []  # New list to store epoch metrics
         
         self.scaler = GradScaler() if use_amp else None
         
@@ -972,8 +982,69 @@ class TrainExp:
         
         self.progress = {'train': [], 'val': []}
         
-        if checkpoint_dir and not os.path.exists(checkpoint_dir):
-            os.makedirs(checkpoint_dir, exist_ok=True)
+        # Remove folder creation from __init__
+        self.version = None
+        self.version_dir = None
+        self.metrics_file = None
+        self.epochs_dir = None
+        
+        # Store model configuration for JSON
+        self.model_config = {}
+        if hasattr(model, 'config'):
+            self.model_config = {
+                'n_classes': model.config.n_classes,
+                'input_dim': model.config.input_dim,
+                'output_dim': model.config.output_dim,
+                'n_features': model.config.n_features,
+                'dropout': model.config.dropout,
+                'use_dense_connections': model.config.use_dense_connections,
+                'use_multi_scale_attention': model.config.use_multi_scale_attention,
+                'use_channel_attention': model.config.use_channel_attention,
+                'use_attention': model.config.use_attention,
+                'confidence_threshold': model.config.confidence_threshold
+            }
+        
+        # Store optimizer configuration
+        self.optimizer_config = {
+            'type': optimizer.__class__.__name__,
+            'params': {k: v for k, v in optimizer.param_groups[0].items() if k != 'params'}
+        }
+        
+        # Store scheduler configuration
+        self.scheduler_config = {
+            'type': scheduler.__class__.__name__,
+            'params': {k: v for k, v in scheduler.__dict__.items() 
+                      if not k.startswith('_') and not callable(v)}
+        }
+        
+        # Store loss function configuration
+        self.loss_config = {
+            'type': loss_fn.__class__.__name__,
+            'params': {k: v for k, v in loss_fn.__dict__.items() 
+                      if not k.startswith('_') and not callable(v)}
+        }
+        
+        # Store training configuration
+        self.training_config = {
+            'num_epochs': num_epochs,
+            'early_stopping_patience': early_stopping_patience,
+            'use_amp': use_amp,
+            'use_ddp': use_ddp,
+            'rank': rank,
+            'world_size': world_size,
+            'gradient_accumulation_steps': gradient_accumulation_steps,
+            'device': str(device),
+            'train_dataset_size': len(train_loader.dataset),
+            'val_dataset_size': len(val_loader.dataset),
+            'batch_size': train_loader.batch_size,
+            'num_workers': train_loader.num_workers
+        }
+        
+        # Store model parameters count
+        self.model_params = {
+            'total_params': sum(p.numel() for p in model.parameters()),
+            'trainable_params': sum(p.numel() for p in model.parameters() if p.requires_grad)
+        }
 
     def train_epoch(self) -> float:
         """
@@ -1004,16 +1075,16 @@ class TrainExp:
             try:
                 if batch_idx % self.gradient_accumulation_steps == 0:
                     self.optimizer.zero_grad(set_to_none=True)
-            
+                
                 data, target = data.to(self.device, non_blocking=True), target.to(self.device, non_blocking=True)
-            
+                
                 if self.use_amp:
                     with autocast(device_type='cuda' if torch.cuda.is_available() else 'cpu'):
                         output = self.model(data)
                         loss = self.loss_fn(output['logits'], target) / self.gradient_accumulation_steps
-                
+                    
                     self.scaler.scale(loss).backward()
-                        
+                    
                     if (batch_idx + 1) % self.gradient_accumulation_steps == 0 or (batch_idx + 1) == len(self.train_loader):
                         self.scaler.step(self.optimizer)
                         self.scaler.update()
@@ -1023,7 +1094,7 @@ class TrainExp:
                     output = self.model(data)
                     loss = self.loss_fn(output['logits'], target) / self.gradient_accumulation_steps
                     loss.backward()
-                        
+                    
                     if (batch_idx + 1) % self.gradient_accumulation_steps == 0 or (batch_idx + 1) == len(self.train_loader):
                         self.optimizer.step()
                         if isinstance(self.scheduler, OneCycleLR):
@@ -1057,7 +1128,6 @@ class TrainExp:
                     if peak_mem > torch.cuda.get_device_properties(0).total_memory * 0.8 / 1e9:
                         torch.cuda.empty_cache()
                         gc.collect()
-                        
             except RuntimeError as e:
                 if "out of memory" in str(e):
                     print(f"WARNING: Out of memory error in batch {batch_idx}. Cleaning up and continuing...")
@@ -1110,56 +1180,9 @@ class TrainExp:
         Returns:
             Dictionary containing training and validation losses
         """
-        if self.rank == 0 and self.checkpoint_dir:
-            os.makedirs(self.checkpoint_dir, exist_ok=True)
-            versions = sorted([d for d in os.listdir(self.checkpoint_dir) if d.startswith('v_')])
-            
-            if not versions:
-                version = 'v_1_01'
-            else:
-                latest = versions[-1].split('_')
-                if len(latest) == 3:
-                    major, minor = int(latest[1]), int(latest[2])
-                    if self.num_epochs > 25:
-                        major += 1
-                        minor = 1
-                    else:
-                        minor += 1
-                        if minor > 99:
-                            major += 1
-                            minor = 1
-                    version = f"v_{major}_{minor:02d}"
-                else:
-                    version = 'v_1_01'
-            
-            version_dir = os.path.join(self.checkpoint_dir, version)
-            
-            while os.path.exists(version_dir):
-                if len(latest) == 3:
-                    major, minor = int(version.split('_')[1]), int(version.split('_')[2])
-                    minor += 1
-                    if minor > 99:
-                        major += 1
-                        minor = 1
-                    version = f"v_{major}_{minor:02d}"
-                    version_dir = os.path.join(self.checkpoint_dir, version)
-                else:
-                    break
-                    
-            os.makedirs(version_dir, exist_ok=True)
-            print(f"Model will be saved as version: {version}")
-        else:
-            version = None
-            version_dir = None
-            
-        if self.use_ddp:
-            version_tensor = torch.zeros(1, dtype=torch.long, device=self.device)
-            if self.rank == 0:
-                version_tensor[0] = int(version.split('_')[1]) * 100 + int(version.split('_')[2])
-            dist.broadcast(version_tensor, 0)
-            version = f"v_{version_tensor[0]//100}_{version_tensor[0]%100:02d}"
-            version_dir = os.path.join(self.checkpoint_dir, version)
-            
+        # Create version directory only after first epoch
+        version_created = False
+        
         for epoch in range(self.num_epochs):
             train_loss = self.train_epoch()
             self.train_losses.append(train_loss)
@@ -1173,11 +1196,122 @@ class TrainExp:
             self.progress['train'].append(train_loss)
             self.progress['val'].append(val_loss)
             
+            # Create epoch metrics dictionary
+            epoch_metrics = {
+                'epoch': epoch + 1,
+                'train_loss': float(train_loss),
+                'val_loss': float(val_loss),
+                'learning_rate': float(self.optimizer.param_groups[0]['lr']),
+                'early_stopping_counter': self.epochs_without_improvement
+            }
+            self.metrics_history.append(epoch_metrics)
+            
+            # Create version directory after first epoch
+            if not version_created and self.rank == 0 and self.checkpoint_dir:
+                os.makedirs(self.checkpoint_dir, exist_ok=True)
+                versions = sorted([d for d in os.listdir(self.checkpoint_dir) if d.startswith('v_')])
+                
+                if not versions:
+                    self.version = 'v_1_01'
+                else:
+                    latest = versions[-1].split('_')
+                    if len(latest) == 3:
+                        major, minor = int(latest[1]), int(latest[2])
+                        if self.num_epochs > 25:
+                            major += 1
+                            minor = 1
+                        else:
+                            minor += 1
+                            if minor > 99:
+                                major += 1
+                                minor = 1
+                        self.version = f"v_{major}_{minor:02d}"
+                    else:
+                        self.version = 'v_1_01'
+                
+                self.version_dir = os.path.join(self.checkpoint_dir, self.version)
+                
+                while os.path.exists(self.version_dir):
+                    if len(latest) == 3:
+                        major, minor = int(self.version.split('_')[1]), int(self.version.split('_')[2])
+                        minor += 1
+                        if minor > 99:
+                            major += 1
+                            minor = 1
+                        self.version = f"v_{major}_{minor:02d}"
+                        self.version_dir = os.path.join(self.checkpoint_dir, self.version)
+                    else:
+                        break
+                        
+                os.makedirs(self.version_dir, exist_ok=True)
+                
+                # Create epochs subdirectory
+                self.epochs_dir = os.path.join(self.version_dir, 'epochs')
+                os.makedirs(self.epochs_dir, exist_ok=True)
+                
+                print(f"Model will be saved as version: {self.version}")
+                
+                # Create metrics file path
+                self.metrics_file = os.path.join(self.version_dir, 'training_metrics.json')
+                version_created = True
+            
+            # Save metrics to JSON file after each epoch
+            if self.rank == 0 and self.metrics_file:
+                import json
+                import datetime
+                
+                # Helper function to make values JSON serializable
+                def make_serializable(obj):
+                    if isinstance(obj, (int, float, str, bool, type(None))):
+                        return obj
+                    elif isinstance(obj, (list, tuple)):
+                        return [make_serializable(item) for item in obj]
+                    elif isinstance(obj, dict):
+                        return {k: make_serializable(v) for k, v in obj.items()}
+                    elif isinstance(obj, torch.Tensor):
+                        return float(obj.item()) if obj.numel() == 1 else obj.tolist()
+                    elif hasattr(obj, '__dict__'):
+                        return make_serializable(obj.__dict__)
+                    else:
+                        return str(obj)
+                
+                try:
+                    # Create comprehensive metrics dictionary
+                    metrics_data = {
+                        'version': self.version,
+                        'timestamp': datetime.datetime.now().isoformat(),
+                        'model_config': make_serializable(self.model_config),
+                        'optimizer_config': make_serializable(self.optimizer_config),
+                        'scheduler_config': make_serializable(self.scheduler_config),
+                        'loss_config': make_serializable(self.loss_config),
+                        'training_config': make_serializable(self.training_config),
+                        'model_params': make_serializable(self.model_params),
+                        'total_epochs': self.num_epochs,
+                        'current_epoch': epoch + 1,
+                        'best_val_loss': float(self.best_val_loss),
+                        'epochs_without_improvement': self.epochs_without_improvement,
+                        'metrics': make_serializable(self.metrics_history)
+                    }
+                    
+                    # Save metrics to both the version directory and the base folder
+                    with open(self.metrics_file, 'w') as f:
+                        json.dump(metrics_data, f, indent=4)
+                    print(f"Saved comprehensive metrics to {self.metrics_file}")
+                    
+                    # Also save to the base folder
+                    base_metrics_file = os.path.join(self.checkpoint_dir, 'training_metrics.json')
+                    with open(base_metrics_file, 'w') as f:
+                        json.dump(metrics_data, f, indent=4)
+                    print(f"Saved comprehensive metrics to base folder: {base_metrics_file}")
+                except Exception as e:
+                    print(f"Warning: Failed to save metrics to JSON: {str(e)}")
+                    print("This is not a critical error, training will continue.")
+            
             print(f'Epoch {epoch+1}/{self.num_epochs}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}')
             
-            # Save after each epoch
-            if self.checkpoint_dir and self.rank == 0:
-                epoch_path = os.path.join(version_dir, f'epoch_{epoch+1}.pt')
+            # Save model after each epoch in the epochs subdirectory
+            if self.checkpoint_dir and self.rank == 0 and self.epochs_dir:
+                epoch_path = os.path.join(self.epochs_dir, f'epoch_{epoch+1}.pt')
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': self.model.state_dict(),
@@ -1193,8 +1327,8 @@ class TrainExp:
                 self.epochs_without_improvement = 0
                 self.best_model_state = self.model.state_dict()
                 
-                if self.checkpoint_dir and self.rank == 0:
-                    checkpoint_path = os.path.join(version_dir, f'best_model.pt')
+                if self.checkpoint_dir and self.rank == 0 and self.version_dir:
+                    checkpoint_path = os.path.join(self.version_dir, f'best_model.pt')
                     torch.save({
                         'epoch': epoch,
                         'model_state_dict': self.model.state_dict(),
@@ -1209,8 +1343,8 @@ class TrainExp:
             
             if self.epochs_without_improvement >= self.early_stopping_patience:
                 print(f'Early stopping triggered after {epoch+1} epochs')
-                if self.checkpoint_dir and self.rank == 0:
-                    final_path = os.path.join(version_dir, 'model.pt')
+                if self.checkpoint_dir and self.rank == 0 and self.version_dir:
+                    final_path = os.path.join(self.version_dir, 'model.pt')
                     torch.save({
                         'epoch': epoch,
                         'model_state_dict': self.best_model_state,
@@ -1226,7 +1360,7 @@ class TrainExp:
         
         result = {'train_losses': self.train_losses, 'val_losses': self.val_losses}
         if self.rank == 0 and self.checkpoint_dir:
-            result['version'] = version
+            result['version'] = self.version
             
         return result
 
@@ -1295,7 +1429,6 @@ def train_model_exp(model: nn.Module, train_loader: DataLoader, val_loader: Data
             print(f"Warning: Test image {test_img_path} not found. Disabling test visualization.")
             test_visualization = False
         else:
-            # Make sure PIL and matplotlib are available
             try:
                 from PIL import Image
                 import matplotlib.pyplot as plt
@@ -1306,6 +1439,20 @@ def train_model_exp(model: nn.Module, train_loader: DataLoader, val_loader: Data
                 test_visualization = False
     
     try:
+        # Adjust hyperparameters for less restricted predictions
+        if isinstance(model, UNetExp):
+            model.confidence_threshold = 0.2  # Lower threshold for more diverse predictions
+        
+        # Adjust loss function weights for better generalization
+        if isinstance(loss_fn, CombinedLoss):
+            # Update the weights tensor instead of trying to assign a new list
+            if len(loss_fn.weights) == 4:  # If we have 4 loss functions
+                loss_fn.weights = torch.tensor([0.6, 0.2, 0.15, 0.05], dtype=torch.float32)
+            elif len(loss_fn.weights) == 2:  # If we have 2 loss functions
+                loss_fn.weights = torch.tensor([0.6, 0.4], dtype=torch.float32)
+            else:
+                print(f"Warning: Unexpected number of loss functions: {len(loss_fn.weights)}")
+        
         trainer = TrainExp(
             model=model,
             train_loader=train_loader,
@@ -1325,7 +1472,7 @@ def train_model_exp(model: nn.Module, train_loader: DataLoader, val_loader: Data
         )
         
         if test_visualization and rank == 0:
-            def visualize_prediction(model, img_paths, save_path, device):
+            def visualize_prediction(model, img_paths, save_path, device, is_test=False):
                 try:
                     from PIL import Image
                     import matplotlib.pyplot as plt
@@ -1345,8 +1492,13 @@ def train_model_exp(model: nn.Module, train_loader: DataLoader, val_loader: Data
                         6: (0, 0, 0)         # unknown - Black
                     }
                     
-                    # Create a figure with 3 rows (one for each image) and 3 columns (original, true mask, predicted mask)
-                    fig, axes = plt.subplots(3, 3, figsize=(18, 18))
+                    # Create appropriate figure based on whether this is a test or training visualization
+                    if is_test:
+                        # For test images: 2 rows (original, prediction) x 5 columns (one for each image)
+                        fig, axes = plt.subplots(2, 5, figsize=(25, 10))
+                    else:
+                        # For training images: 3 rows (one for each image) x 3 columns (original, true mask, predicted mask)
+                        fig, axes = plt.subplots(3, 3, figsize=(18, 18))
                     
                     for img_idx, img_path in enumerate(img_paths):
                         print(f"Processing image {img_idx+1}: {img_path}")
@@ -1358,11 +1510,12 @@ def train_model_exp(model: nn.Module, train_loader: DataLoader, val_loader: Data
                         # Create model input tensor
                         img_tensor = transformer_exp(img).unsqueeze(0).to(device)
                         
-                        # Load true mask if it exists
+                        # Load true mask if it exists (only for training images)
                         mask_path = img_path.replace('_sat.jpg', '_mask.png')
                         print(f"Looking for mask at {mask_path}")
                         
-                        if os.path.exists(mask_path):
+                        has_true_mask = False
+                        if os.path.exists(mask_path) and not is_test:
                             # Load true mask as RGB and convert to class index
                             true_mask_rgb = np.array(Image.open(mask_path).convert('RGB'))
                             print(f"Loaded true mask with shape {true_mask_rgb.shape}")
@@ -1415,7 +1568,7 @@ def train_model_exp(model: nn.Module, train_loader: DataLoader, val_loader: Data
                         
                         print(f"Class counts in prediction: {class_counts}")
                         
-                        # Create the colored true mask
+                        # Create the colored true mask (only for training images)
                         colored_true = np.zeros((true_mask.shape[0], true_mask.shape[1], 3), dtype=np.uint8)
                         true_class_counts = {}
                         
@@ -1438,20 +1591,29 @@ def train_model_exp(model: nn.Module, train_loader: DataLoader, val_loader: Data
                         if has_true_mask:
                             print(f"Class counts in true mask: {true_class_counts}")
                         
-                        # Display the original image
-                        axes[img_idx, 0].imshow(img_array)
-                        axes[img_idx, 0].set_title(f'Original Image ({os.path.basename(img_path)})')
-                        axes[img_idx, 0].axis('off')
-                        
-                        # Display the true mask
-                        axes[img_idx, 1].imshow(colored_true)
-                        axes[img_idx, 1].set_title('True Mask')
-                        axes[img_idx, 1].axis('off')
-                        
-                        # Display the predicted mask
-                        axes[img_idx, 2].imshow(colored_pred)
-                        axes[img_idx, 2].set_title('Predicted Mask')
-                        axes[img_idx, 2].axis('off')
+                        # Display images based on whether this is a test or training visualization
+                        if is_test:
+                            # For test images: original image in first row, prediction in second row
+                            axes[0, img_idx].imshow(img_array)
+                            axes[0, img_idx].set_title(f'Original Image ({os.path.basename(img_path)})')
+                            axes[0, img_idx].axis('off')
+                            
+                            axes[1, img_idx].imshow(colored_pred)
+                            axes[1, img_idx].set_title('Predicted Mask')
+                            axes[1, img_idx].axis('off')
+                        else:
+                            # For training images: original, true mask, predicted mask in each row
+                            axes[img_idx, 0].imshow(img_array)
+                            axes[img_idx, 0].set_title(f'Original Image ({os.path.basename(img_path)})')
+                            axes[img_idx, 0].axis('off')
+                            
+                            axes[img_idx, 1].imshow(colored_true)
+                            axes[img_idx, 1].set_title('True Mask')
+                            axes[img_idx, 1].axis('off')
+                            
+                            axes[img_idx, 2].imshow(colored_pred)
+                            axes[img_idx, 2].set_title('Predicted Mask')
+                            axes[img_idx, 2].axis('off')
                     
                     # Define class labels
                     classes = ['Urban', 'Agriculture', 'Rangeland', 'Forest', 'Water', 'Barren', 'Unknown']
@@ -1511,12 +1673,25 @@ def train_model_exp(model: nn.Module, train_loader: DataLoader, val_loader: Data
                     os.makedirs(version_dir, exist_ok=True)
                     print(f"Model will be saved as version: {version}")
                     
+                    # Create epochs subdirectory
+                    epochs_dir = os.path.join(version_dir, 'epochs')
+                    os.makedirs(epochs_dir, exist_ok=True)
+                    
                     nonlocal viz_dir
                     viz_dir = os.path.join(version_dir, 'visualizations')
                     os.makedirs(viz_dir, exist_ok=True)
+                    
+                    # Create train_vis and test_vis subdirectories
+                    train_vis_dir = os.path.join(viz_dir, 'train_vis')
+                    test_vis_dir = os.path.join(viz_dir, 'test_vis')
+                    os.makedirs(train_vis_dir, exist_ok=True)
+                    os.makedirs(test_vis_dir, exist_ok=True)
                 else:
                     version = None
                     version_dir = None
+                    epochs_dir = None
+                    train_vis_dir = None
+                    test_vis_dir = None
                     
                 if self.use_ddp:
                     version_tensor = torch.zeros(1, dtype=torch.long, device=self.device)
@@ -1525,6 +1700,7 @@ def train_model_exp(model: nn.Module, train_loader: DataLoader, val_loader: Data
                     dist.broadcast(version_tensor, 0)
                     version = f"v_{version_tensor[0]//100}_{version_tensor[0]%100:02d}"
                     version_dir = os.path.join(self.checkpoint_dir, version)
+                    epochs_dir = os.path.join(version_dir, 'epochs')
                     
                 for epoch in range(self.num_epochs):
                     train_loss = self.train_epoch()
@@ -1542,18 +1718,41 @@ def train_model_exp(model: nn.Module, train_loader: DataLoader, val_loader: Data
                     print(f'Epoch {epoch+1}/{self.num_epochs}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}')
                     
                     if self.rank == 0 and viz_dir:
-                        # Use multiple test images
-                        test_img_paths = [
+                        # Define training and test image paths
+                        train_img_paths = [
                             os.path.join(base_directory, 'data', 'train', '119_sat.jpg'),
                             os.path.join(base_directory, 'data', 'train', '855_sat.jpg'),
                             os.path.join(base_directory, 'data', 'train', '40350_sat.jpg')
                         ]
-                        visualize_prediction(self.model, test_img_paths, 
-                                             os.path.join(viz_dir, f'epoch_{epoch+1}.png'),
-                                             self.device)
+                        
+                        test_img_paths = [
+                            os.path.join(base_directory, 'data', 'test', '6783_sat.jpg'),
+                            os.path.join(base_directory, 'data', 'test', '14397_sat.jpg'),
+                            os.path.join(base_directory, 'data', 'test', '23458_sat.jpg'),
+                            os.path.join(base_directory, 'data', 'test', '41687_sat.jpg'),
+                            os.path.join(base_directory, 'data', 'test', '100877_sat.jpg')
+                        ]
+                        
+                        # Generate and save training visualizations
+                        visualize_prediction(
+                            self.model, 
+                            train_img_paths, 
+                            os.path.join(train_vis_dir, f'epoch_{epoch+1}.png'),
+                            self.device,
+                            is_test=False
+                        )
+                        
+                        # Generate and save test visualizations
+                        visualize_prediction(
+                            self.model, 
+                            test_img_paths, 
+                            os.path.join(test_vis_dir, f'epoch_{epoch+1}.png'),
+                            self.device,
+                            is_test=True
+                        )
                     
-                    if self.checkpoint_dir and self.rank == 0:
-                        epoch_path = os.path.join(version_dir, f'epoch_{epoch+1}.pt')
+                    if self.checkpoint_dir and self.rank == 0 and epochs_dir:
+                        epoch_path = os.path.join(epochs_dir, f'epoch_{epoch+1}.pt')
                         torch.save({
                             'epoch': epoch,
                             'model_state_dict': self.model.state_dict(),
@@ -1618,7 +1817,6 @@ def train_model_exp(model: nn.Module, train_loader: DataLoader, val_loader: Data
 if __name__ == '__main__':
     try:
         cleanup_semaphores()
-        
         print("===== GPU DETECTION =====")
         if torch.cuda.is_available():
             device_count = torch.cuda.device_count()
@@ -1660,7 +1858,7 @@ if __name__ == '__main__':
             use_multi_scale_attention=True,
             use_channel_attention=True,
             use_attention=True,
-            confidence_threshold=0.3
+            confidence_threshold=0.25
         )
         model = UNetExp(model_config).to(device)
         
@@ -1713,12 +1911,22 @@ if __name__ == '__main__':
             epochs=35,  # Match the actual number of epochs
             steps_per_epoch=len(train_loader) // gradient_accumulation_steps
         )
+
+        class_colors = {
+        0: (0, 255, 255),    # urban land - Cyan
+        1: (255, 255, 0),    # agricultural land - Yellow
+        2: (255, 0, 255),    # rangeland - Magenta
+        3: (0, 255, 0),      # forest land - Green
+        4: (0, 0, 255),      # water - Dark blue
+        5: (255, 255, 255),  # barren land - White
+        6: (0, 0, 0)         # unknown - Black
+        }
         
         class_weights = torch.ones(7)
-        class_weights[1] = 0.8  # Increase from 0.5
-        class_weights[0] = 1.2  # Increase from 1.0
+        class_weights[1] = 0.75  # Increase from 0.5
+        class_weights[0] = 1.3  # Increase from 1.0
         class_weights[2] = 1.2  # Increase from 1.0
-        class_weights[3] = 1.2  # Increase from 1.0
+        class_weights[3] = 1.3  # Increase from 1.0
         
         focal_loss = FocalLossExp(
             gamma=3.0,
@@ -1749,15 +1957,15 @@ if __name__ == '__main__':
             margin=1.0
         )
         
-        # loss_fn = CombinedLoss(
-        #     loss_functions=[focal_loss, semantic_loss, topology_loss, contrastive_loss],
-        #     weights=[0.8, 0.4, 0.3, 0.1]
-        # )
-
         loss_fn = CombinedLoss(
-            loss_functions=[focal_loss, semantic_loss],
-            weights=[0.7, 0.3]
+            loss_functions=[focal_loss, semantic_loss, topology_loss, contrastive_loss],
+            weights=[0.55, 0.2, 0.15, 0.1]
         )
+
+        # loss_fn = CombinedLoss(
+        #     loss_functions=[focal_loss, semantic_loss],
+        #     weights=[0.6, 0.4]
+        # )
         
         checkpoint_dir = os.path.join(base_directory, 'data', 'models', 'exp_checkpoints')
         os.makedirs(checkpoint_dir, exist_ok=True)
