@@ -1814,6 +1814,105 @@ def train_model_exp(model: nn.Module, train_loader: DataLoader, val_loader: Data
     
     return result
 
+def compile_model(
+    model_config: UNetConfigExp,
+    loss_functions: Optional[List[nn.Module]] = None,
+    device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
+    learning_rate: float = 0.001,
+    weight_decay: float = 1e-4,
+    optimizer_class: str = 'adam',
+    scheduler_class: str = 'cosine',
+    scheduler_params: Optional[Dict[str, Any]] = None
+) -> Tuple[nn.Module, torch.optim.Optimizer, torch.optim.lr_scheduler._LRScheduler]:
+    """
+    Compile a model with the given configuration and return the model, optimizer, and scheduler.
+    
+    Args:
+        model_config: UNetConfigExp object with model parameters
+        loss_functions: List of loss functions to use
+        device: Device to use for training ('cuda' or 'cpu')
+        learning_rate: Learning rate for the optimizer
+        weight_decay: Weight decay for the optimizer
+        optimizer_class: Optimizer class to use ('adam', 'adamw', 'sgd')
+        scheduler_class: Scheduler class to use ('cosine', 'step', 'plateau')
+        scheduler_params: Additional parameters for the scheduler
+        
+    Returns:
+        Tuple containing the model, optimizer, and scheduler
+    """
+    # Create model
+    model = UNetExp(model_config)
+    model = model.to(device)
+    
+    # Create loss functions if not provided
+    if loss_functions is None:
+        focal_loss = FocalLossExp()
+        boundary_loss = SemanticBoundaryLoss(focal_loss=focal_loss)
+        topology_loss = TopologyAwareLoss(focal_loss=focal_loss)
+        contrastive_loss = ContrastiveLoss()
+        
+        loss_functions = [
+            CombinedLoss(
+                [focal_loss, boundary_loss, topology_loss, contrastive_loss],
+                [1.0, 0.2, 0.15, 0.1]
+            )
+        ]
+    
+    # Create optimizer
+    if optimizer_class.lower() == 'adam':
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay
+        )
+    elif optimizer_class.lower() == 'adamw':
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay
+        )
+    elif optimizer_class.lower() == 'sgd':
+        optimizer = torch.optim.SGD(
+            model.parameters(),
+            lr=learning_rate,
+            momentum=0.9,
+            weight_decay=weight_decay
+        )
+    else:
+        raise ValueError(f"Unknown optimizer class: {optimizer_class}")
+    
+    # Create scheduler
+    if scheduler_class.lower() == 'cosine':
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=100,  # Will be adjusted in the trainer
+            eta_min=learning_rate * 0.01
+        )
+    elif scheduler_class.lower() == 'step':
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size=30,  # Will be adjusted in the trainer
+            gamma=0.1
+        )
+    elif scheduler_class.lower() == 'plateau':
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=0.1,
+            patience=5,
+            verbose=True
+        )
+    else:
+        raise ValueError(f"Unknown scheduler class: {scheduler_class}")
+    
+    # Apply additional scheduler parameters if provided
+    if scheduler_params is not None:
+        for key, value in scheduler_params.items():
+            if hasattr(scheduler, key):
+                setattr(scheduler, key, value)
+    
+    return model, optimizer, scheduler
+
 if __name__ == '__main__':
     try:
         cleanup_semaphores()
@@ -1979,7 +2078,7 @@ if __name__ == '__main__':
             loss_fn=loss_fn,
             device=device,
             num_epochs=35,
-            early_stopping_patience=5,
+            early_stopping_patience=7,
             checkpoint_dir=checkpoint_dir,
             use_amp=True,
             use_ddp=False,
