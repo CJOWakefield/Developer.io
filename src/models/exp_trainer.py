@@ -80,8 +80,8 @@ class MultiScaleAttention(nn.Module):
         use_channel_attention: Whether to apply channel-wise attention
         in_channels: Number of input channels
     """
-    def __init__(self, kernel_sizes: List[int] = [3, 5, 7], dropout_rate: float = 0.1, 
-                 min_scale: float = 0.2, max_scale: float = 1.0, use_channel_attention: bool = True,
+    def __init__(self, kernel_sizes: List[int] = [3, 5], dropout_rate: float = 0.1, 
+                 min_scale: float = 0.2, max_scale: float = 1.0, use_channel_attention: bool = False,
                  in_channels: int = 64) -> None:
         super().__init__()
         self.kernel_sizes = kernel_sizes
@@ -91,7 +91,6 @@ class MultiScaleAttention(nn.Module):
         ])
         self.sigmoid = nn.Sigmoid()
         self.fusion = nn.Conv2d(len(kernel_sizes), 1, kernel_size=1)
-        self.batch_norm = nn.BatchNorm2d(1)
         self.dropout = nn.Dropout2d(p=dropout_rate)
         self.min_scale = min_scale
         self.max_scale = max_scale
@@ -129,7 +128,6 @@ class MultiScaleAttention(nn.Module):
             attention_maps.append(attention)
         
         fused_attention = self.fusion(torch.cat(attention_maps, dim=1))
-        fused_attention = self.batch_norm(fused_attention)
         fused_attention = self.dropout(fused_attention)
         fused_attention = self.min_scale + (self.max_scale - self.min_scale) * fused_attention
         
@@ -2058,7 +2056,7 @@ if __name__ == '__main__':
         
         loss_fn = CombinedLoss(
             loss_functions=[focal_loss, semantic_loss, topology_loss, contrastive_loss],
-            weights=[0.55, 0.2, 0.15, 0.1]
+            weights=[0.5, 0.25, 0.15, 0.1]
         )
 
         # loss_fn = CombinedLoss(
@@ -2077,7 +2075,7 @@ if __name__ == '__main__':
             scheduler=scheduler,
             loss_fn=loss_fn,
             device=device,
-            num_epochs=35,
+            num_epochs=50,
             early_stopping_patience=7,
             checkpoint_dir=checkpoint_dir,
             use_amp=True,
